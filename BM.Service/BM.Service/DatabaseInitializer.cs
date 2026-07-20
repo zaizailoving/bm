@@ -92,6 +92,8 @@ namespace BM.Service
                 var existingColumns = GetSqliteColumns(dbContext, tableName);
                 if (existingColumns.Count == 0)
                 {
+                    // 库已存在时 EnsureCreated 不会建新表，这里补建缺失表
+                    EnsureSqliteTable(dbContext, entityType, tableName);
                     continue;
                 }
 
@@ -109,6 +111,75 @@ namespace BM.Service
                 }
             }
         }
+
+        private static void EnsureSqliteTable(SqlDBContext dbContext, IEntityType entityType, string tableName)
+        {
+            var storeObject = StoreObjectIdentifier.Table(tableName, entityType.GetSchema());
+            var columnDefs = new List<string>();
+
+            foreach (var property in entityType.GetProperties())
+            {
+                var columnName = property.GetColumnName(storeObject);
+                if (string.IsNullOrWhiteSpace(columnName))
+                {
+                    continue;
+                }
+
+                var type = Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType;
+                var sqliteType = GetSqliteType(type);
+                var isPk = property.IsPrimaryKey();
+                var nullable = property.IsNullable && !isPk;
+
+                if (isPk && (type == typeof(int) || type == typeof(long)))
+                {
+                    columnDefs.Add($"{QuoteSqliteIdentifier(columnName)} INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT");
+                    continue;
+                }
+
+                if (isPk)
+                {
+                    columnDefs.Add($"{QuoteSqliteIdentifier(columnName)} {sqliteType} NOT NULL PRIMARY KEY");
+                    continue;
+                }
+
+                if (nullable)
+                {
+                    columnDefs.Add($"{QuoteSqliteIdentifier(columnName)} {sqliteType}");
+                }
+                else
+                {
+                    columnDefs.Add($"{QuoteSqliteIdentifier(columnName)} {sqliteType} NOT NULL DEFAULT {GetSqliteDefaultValue(type)}");
+                }
+            }
+
+            if (columnDefs.Count == 0)
+            {
+                return;
+            }
+
+            var sql = $"CREATE TABLE IF NOT EXISTS {QuoteSqliteIdentifier(tableName)} ({string.Join(", ", columnDefs)})";
+            dbContext.Database.ExecuteSqlRaw(sql);
+
+            // 唯一索引 / 普通索引
+            foreach (var index in entityType.GetIndexes())
+            {
+                var indexColumns = index.Properties
+                    .Select(p => p.GetColumnName(storeObject))
+                    .Where(c => !string.IsNullOrWhiteSpace(c))
+                    .Select(c => QuoteSqliteIdentifier(c!))
+                    .ToList();
+                if (indexColumns.Count == 0)
+                {
+                    continue;
+                }
+
+                var indexName = index.GetDatabaseName() ?? $"IX_{tableName}_{string.Join("_", index.Properties.Select(p => p.Name))}";
+                var unique = index.IsUnique ? "UNIQUE " : string.Empty;
+                var indexSql = $"CREATE {unique}INDEX IF NOT EXISTS {QuoteSqliteIdentifier(indexName)} ON {QuoteSqliteIdentifier(tableName)} ({string.Join(", ", indexColumns)})";
+                dbContext.Database.ExecuteSqlRaw(indexSql);
+            }
+        }
+
 
         private static void EnsureSqliteColumn(SqlDBContext dbContext, string tableName, string columnName, string columnDefinition)
         {
