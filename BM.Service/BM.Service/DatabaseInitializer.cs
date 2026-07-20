@@ -9,12 +9,11 @@ using BM.Service.Core.Utility;
 namespace BM.Service
 {
     /// <summary>
-    /// Database create + base seed (admin role / admin user).
+    /// Database create + base seed (admin user).
     /// Business-specific seed data should be added here or in BM.Service.Business as needed.
     /// </summary>
     public static class DatabaseInitializer
     {
-        private const long TenantId = 1;
         private const string AdminRoleName = "admin";
         private const string AdminUserName = "admin";
 
@@ -51,39 +50,25 @@ namespace BM.Service
             var now = DateTime.Now;
             var adminPassword = configuration["Seed:AdminPassword"] ?? "1";
 
-            var roleSet = dbContext.GetDbSet<UserroleEntity>();
-            var adminRole = roleSet.FirstOrDefault(t => t.tenant_id == TenantId && t.role_name == AdminRoleName);
-            if (adminRole == null)
-            {
-                adminRole = new UserroleEntity
-                {
-                    role_name = AdminRoleName,
-                    is_valid = true,
-                    create_time = now,
-                    last_update_time = now,
-                    tenant_id = TenantId
-                };
-                roleSet.Add(adminRole);
-                dbContext.SaveChanges();
-            }
-
             var userSet = dbContext.GetDbSet<userEntity>();
-            if (!userSet.Any(t => t.tenant_id == TenantId && (t.user_name == AdminUserName || t.user_num == AdminUserName)))
+            if (!userSet.Any(t => t.username == AdminUserName))
             {
                 userSet.Add(new userEntity
                 {
-                    user_num = AdminUserName,
-                    user_name = AdminUserName,
-                    contact_tel = string.Empty,
-                    user_role = AdminRoleName,
-                    sex = "male",
-                    is_valid = true,
-                    auth_string = Md5Helper.Md5Encrypt32(adminPassword),
-                    email = string.Empty,
-                    creator = AdminUserName,
-                    create_time = now,
-                    last_update_time = now,
-                    tenant_id = TenantId
+                    username = AdminUserName,
+                    password_hash = Md5Helper.Md5Encrypt32(adminPassword),
+                    nickname = AdminUserName,
+                    avatar = null,
+                    phone = null,
+                    role = AdminRoleName,
+                    archive_no = null,
+                    train_camp_status = "ongoing",
+                    total_coins = 0,
+                    available_coins = 0,
+                    last_login_time = null,
+                    last_login_ip = null,
+                    status = "normal",
+                    create_time = now
                 });
                 dbContext.SaveChanges();
             }

@@ -1,15 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.Extensions.Logging;
-using System.ComponentModel;
 using System.Data;
 using System.Data.Common;
 using System.Reflection;
-using BM.Service.Core;
-using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
-using Microsoft.Data.SqlClient;
-using Mapster;
-using Microsoft.AspNetCore.JsonPatch.Internal;
 using BM.Service.Core.Models;
 
 namespace BM.Service.Core.DBContext
@@ -72,17 +65,7 @@ namespace BM.Service.Core.DBContext
         /// <param name="modelBuilder"></param>
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Entity<GlobalUniqueSerialEntity>();
             MappingEntityTypes(modelBuilder);
-            /*foreach (var entityType in modelBuilder.Model.GetEntityTypes())
-               {
-                   if (typeof(Models.IHasTenant).IsAssignableFrom(entityType.ClrType))
-                   {
-                       ConfigureGlobalFiltersMethodInfo
-                          .MakeGenericMethod(entityType.ClrType)
-                          .Invoke(this, new object[] { modelBuilder });
-                   }
-               }*/
             base.OnModelCreating(modelBuilder);
         }
 

@@ -1,83 +1,99 @@
-using Microsoft.AspNetCore.Mvc.RazorPages;
-using BM.Service.Core.Utility;
-using System;
-using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using Microsoft.EntityFrameworkCore;
 
 namespace BM.Service.Core.Models
 {
     /// <summary>
-    /// user entity
+    /// 用户表
     /// </summary>
     [Table("user")]
+    [Index(nameof(username), IsUnique = true, Name = "uniq_username")]
+    [Index(nameof(phone), IsUnique = true, Name = "uniq_phone")]
+    [Index(nameof(archive_no), IsUnique = true, Name = "uniq_archive_no")]
     public class userEntity : BaseModel
+
     {
-
-        #region property
+        /// <summary>
+        /// 登录用户名（唯一）
+        /// </summary>
+        [Required]
+        [MaxLength(50)]
+        public string username { get; set; } = string.Empty;
 
         /// <summary>
-        /// user's number
+        /// 加密后的密码（建议 bcrypt，当前项目登录兼容 MD5）
         /// </summary>
-        public string user_num { get; set; } = string.Empty;
+        [Required]
+        [MaxLength(255)]
+        public string password_hash { get; set; } = string.Empty;
 
         /// <summary>
-        /// user's name
+        /// 昵称（如：星星）
         /// </summary>
-        public string user_name { get; set; } = string.Empty;
+        [MaxLength(50)]
+        public string? nickname { get; set; }
 
         /// <summary>
-        /// contact
+        /// 头像 URL
         /// </summary>
-        public string contact_tel { get; set; } = string.Empty;
+        [MaxLength(255)]
+        public string? avatar { get; set; }
 
         /// <summary>
-        /// user's role
+        /// 手机号（用于找回密码）
         /// </summary>
-        public string user_role { get; set; } = string.Empty;
+        [MaxLength(20)]
+        public string? phone { get; set; }
 
         /// <summary>
-        /// sex
+        /// 角色: student/teacher/admin
         /// </summary>
-        public string sex { get; set; } = string.Empty;
+        [MaxLength(20)]
+        public string role { get; set; } = "student";
 
         /// <summary>
-        /// is_valid
+        /// 档案编号（如：S13-126）
         /// </summary>
-        public bool is_valid { get; set; } = false;
+        [MaxLength(20)]
+        public string? archive_no { get; set; }
 
         /// <summary>
-        /// password
+        /// 训练营状态: ongoing/finished/paused
         /// </summary>
-        public string auth_string { get; set; } = string.Empty;
+        [MaxLength(20)]
+        public string train_camp_status { get; set; } = "ongoing";
 
         /// <summary>
-        /// email
+        /// 累计金币
         /// </summary>
-        public string email { get; set; } = string.Empty;
+        public int total_coins { get; set; } = 0;
 
         /// <summary>
-        /// creator
+        /// 可用金币
         /// </summary>
-        public string creator { get; set; } = string.Empty;
+        public int available_coins { get; set; } = 0;
 
         /// <summary>
-        /// createtime
+        /// 最近登录时间
         /// </summary>
-        public DateTime create_time { get; set; } = UtilConvert.MinDate;
+        public DateTime? last_login_time { get; set; }
 
         /// <summary>
-        /// last update time
+        /// 最近登录 IP
         /// </summary>
-        public DateTime last_update_time { get; set; } = UtilConvert.MinDate;
+        [MaxLength(45)]
+        public string? last_login_ip { get; set; }
 
         /// <summary>
-        /// tenant
+        /// 账号状态: normal/disabled
         /// </summary>
-        public long tenant_id { get; set; } = 0;
+        [MaxLength(20)]
+        public string status { get; set; } = "normal";
 
-
-        #endregion
-
+        /// <summary>
+        /// 创建时间
+        /// </summary>
+        public DateTime create_time { get; set; } = DateTime.Now;
     }
 }
