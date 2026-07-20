@@ -180,8 +180,13 @@ namespace BM.Service.Core.Extentions
             var provider = services.Configure<SwaggerSettings>(swaggerSettings).BuildServiceProvider();
             var settings = provider.GetService<IOptions<SwaggerSettings>>()?.Value;
 
-            if (settings != null && settings.Name.Equals("BM.Service"))
+            // Name 为空时避免 NullReference；Description 兼容 appsettings 的 ApiDescription
+            if (settings != null && string.Equals(settings.Name, "BM.Service", StringComparison.OrdinalIgnoreCase))
             {
+                var description = !string.IsNullOrWhiteSpace(settings.Description)
+                    ? settings.Description
+                    : configuration["SwaggerSettings:ApiDescription"];
+
                 services.AddSwaggerGen(c =>
                 {
                     typeof(CustomApiVersion.ApiVersions).GetEnumNames().ToList().ForEach(version =>
@@ -190,9 +195,10 @@ namespace BM.Service.Core.Extentions
                         {
                             Title = settings.ApiTitle,
                             Version = settings.ApiVersion,
-                            Description = settings.Description
+                            Description = description
                         });
                     });
+
 
                     if (settings.XmlFiles != null && settings.XmlFiles.Count > 0)
                     {
