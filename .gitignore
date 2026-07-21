@@ -74,11 +74,18 @@ ehthumbs.db
 ## Publish / temp
 publish/
 **/wwwroot/lib/
+**/wwwroot/uploads/
 *.tmp
 *.temp
 *~
 *.swp
 *.bak
+
+## Generated docs / user uploads
+**/uploads/
+*.user
+*.DotSettings.user
+
 
 ## NLog / runtime logs (outside bin)
 **/Log/
