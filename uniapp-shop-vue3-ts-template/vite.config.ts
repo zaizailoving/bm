@@ -8,4 +8,13 @@ export default defineConfig({
     sourcemap: process.env.NODE_ENV === 'development',
   },
   plugins: [uni()],
+  // H5 开发代理到 BM.Service，避免浏览器跨域
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:20011',
+        changeOrigin: true,
+      },
+    },
+  },
 })

@@ -10,7 +10,9 @@
     {
       "path": "pages/my/my",
       "style": {
-        "navigationBarTitleText": "我的"
+        "navigationBarTitleText": "我的",
+        "navigationBarBackgroundColor": "#6a4dff",
+        "navigationBarTextStyle": "white"
       }
     },
     {
@@ -28,7 +30,9 @@
     {
       "path": "pages/login/login",
       "style": {
-        "navigationBarTitleText": "登录"
+        "navigationBarTitleText": "登录",
+        "navigationBarBackgroundColor": "#1a9b7e",
+        "navigationBarTextStyle": "white"
       }
     }
   ],
@@ -40,8 +44,8 @@
   },
   // 设置 TabBar
   "tabBar": {
-    "color": "#333",
-    "selectedColor": "#27ba9b",
+    "color": "#999",
+    "selectedColor": "#7b5cff",
     "backgroundColor": "#fff",
     "borderStyle": "white",
     "list": [

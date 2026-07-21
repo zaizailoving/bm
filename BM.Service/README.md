@@ -29,18 +29,40 @@
 - 用户名：`admin`
 - 密码：配置项 `Seed:AdminPassword`（默认 `1`）
 
-## 认证 API
+## API 文档
 
-认证相关接口见：[`docs/API_Auth.md`](docs/API_Auth.md)
+| 模块 | 文档 | 说明 |
+|------|------|------|
+| 认证 | [`docs/API_Auth.md`](docs/API_Auth.md) | 注册 / 登录 / 改密 |
+| 用户 | [`docs/API_User.md`](docs/API_User.md) | 个人资料 |
+| 每日计划 | [`docs/API_Daily.md`](docs/API_Daily.md) | 今日计划 / 一键提交 |
+| 打卡上传 | [`docs/API_Checkin.md`](docs/API_Checkin.md) | 视频/图片/描述上传 |
+| 健康检查 | [`docs/API_Health.md`](docs/API_Health.md) | alive / ping |
 
-| 接口 | 方法 | 路径 | 鉴权 |
-|------|------|------|------|
-| 注册 | POST | `/api/auth/register` | 匿名 |
-| 登录 | POST | `/api/auth/login` | 匿名 |
-| 修改密码 | POST | `/api/auth/change-password` | Bearer JWT |
+### 接口一览
 
+| 模块 | 接口 | 方法 | 路径 | 鉴权 |
+|------|------|------|------|------|
+| 认证 | 注册 | POST | `/api/auth/register` | 匿名 |
+| 认证 | 登录 | POST | `/api/auth/login` | 匿名 |
+| 认证 | 修改密码 | POST | `/api/auth/change-password` | Bearer JWT |
+| 用户 | 个人信息 | GET | `/api/user/profile` | Bearer JWT |
+| 每日计划 | 今日计划 | GET | `/api/daily/today` | Bearer JWT |
+| 每日计划 | 一键提交 | POST | `/api/daily/submit` | Bearer JWT |
+| 打卡 | 上传内容 | POST | `/api/checkin/upload` | Bearer JWT |
+| 健康 | 存活 | GET | `/Health/alive` | 匿名 |
+| 健康 | 运行 | GET | `/Health/ping` | Bearer JWT |
+
+### 学员端推荐联调顺序
+
+1. `POST /api/auth/register` → `POST /api/auth/login` 拿到 `access_token`
+2. `GET /api/user/profile` 验证鉴权与资料
+3. `GET /api/daily/today` 拿到任务与 `checkin_id`
+4. `POST /api/checkin/upload` 逐条上传（multipart）
+5. `POST /api/daily/submit` 一键提交当日计划
 
 ## 如何新增业务
+
 
 1. 在 `BM.Service.Business/Entities` 下添加实体（继承 `BaseModel`，并配置 EF 映射）
 2. 在 `IServices` / `Services` 写业务服务（服务接口继承 `IDependency` 可自动注入）
