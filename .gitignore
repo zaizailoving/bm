@@ -89,3 +89,61 @@ internal-nlog.txt
 _ReSharper*/
 *.[Rr]e[Ss]harper
 *.DotSettings.user
+
+## ---------------------------------------------------------------------------
+## Frontend: Node / Vue / Vite / uni-app (uniapp-shop-vue3-ts-template)
+## ---------------------------------------------------------------------------
+
+## Dependencies
+node_modules/
+**/node_modules/
+
+## Build outputs
+dist/
+**/dist/
+dist-ssr/
+unpackage/
+**/unpackage/
+.hbuilderx/
+
+## Package manager logs / cache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.npm/
+.yarn/
+.pnpm-store/
+.cache/
+
+## Env / local secrets (keep .env.example if present)
+.env
+.env.*
+!.env.example
+*.local
+
+## TypeScript / tooling caches
+*.tsbuildinfo
+.eslintcache
+.stylelintcache
+.turbo/
+.vite/
+.parcel-cache/
+
+## Test / coverage (frontend)
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+## Optional: auto-generated lockfile policy
+## Keep package-lock.json / pnpm-lock.yaml in repo for reproducible installs.
+## Uncomment below if you prefer NOT to commit lockfiles:
+# package-lock.json
+# pnpm-lock.yaml
+# yarn.lock
+
+## uni-app / mini-program local artifacts
+project.private.config.json
+**/project.private.config.json

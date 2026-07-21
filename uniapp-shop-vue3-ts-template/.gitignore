@@ -1,0 +1,52 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies
+node_modules
+.pnpm-store
+.npm
+.yarn
+
+# Build / output
+dist
+dist-ssr
+unpackage
+.hbuilderx
+
+# Local env / secrets
+*.local
+.env
+.env.*
+!.env.example
+
+# Caches / tooling
+.cache
+.vite
+.turbo
+.parcel-cache
+*.tsbuildinfo
+.eslintcache
+.stylelintcache
+
+# Test / coverage
+coverage
+.nyc_output
+playwright-report
+test-results
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor (project may keep shared .vscode; ignore personal overrides if needed)
+# .vscode/*
+# !.vscode/extensions.json
+
+# uni-app / WeChat mini-program private config
+project.private.config.json

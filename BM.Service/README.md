@@ -29,6 +29,17 @@
 - 用户名：`admin`
 - 密码：配置项 `Seed:AdminPassword`（默认 `1`）
 
+## 认证 API
+
+认证相关接口见：[`docs/API_Auth.md`](docs/API_Auth.md)
+
+| 接口 | 方法 | 路径 | 鉴权 |
+|------|------|------|------|
+| 注册 | POST | `/api/auth/register` | 匿名 |
+| 登录 | POST | `/api/auth/login` | 匿名 |
+| 修改密码 | POST | `/api/auth/change-password` | Bearer JWT |
+
+
 ## 如何新增业务
 
 1. 在 `BM.Service.Business/Entities` 下添加实体（继承 `BaseModel`，并配置 EF 映射）
