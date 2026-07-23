@@ -154,3 +154,25 @@ test-results/
 ## uni-app / mini-program local artifacts
 project.private.config.json
 **/project.private.config.json
+
+## ---------------------------------------------------------------------------
+## Large media / local-only assets (optional, already may be tracked)
+## 若不想把教学视频推到 GitHub，取消下一行注释，并执行：
+##   git rm -r --cached uniapp-shop-vue3-ts-template/src/static/videos
+## ---------------------------------------------------------------------------
+# uniapp-shop-vue3-ts-template/src/static/videos/**
+# !uniapp-shop-vue3-ts-template/src/static/videos/.gitkeep
+
+## Local helper scripts / temp
+**/rename-videos.ps1
+*.ps1.bak
+
+## Local SQLite DB next to service
+**/bm.db
+**/bm.db-*
+
+## Keep example configs, ignore personal overrides
+**/appsettings.*.local.json
+**/appsettings.Local.json
+
+

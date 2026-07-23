@@ -1,11 +1,1145 @@
 <script setup lang="ts">
-//
+import { ref, computed } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
+import { useMemberStore } from '@/stores'
+import { getDailyTodayApi, submitDailyApi } from '@/services/daily'
+import { uploadCheckinApi } from '@/services/checkin'
+import { getUserProfileApi } from '@/services/user'
+import { resolveTeachVideoFile, hasTeachVideo } from '@/utils/teachVideo'
+
+import type { DailyToday, DailyTaskItem } from '@/types/api'
+
+const memberStore = useMemberStore()
+const loading = ref(false)
+const plan = ref<DailyToday | null>(null)
+const coins = ref(0)
+
+/** 上传弹窗 */
+const showUpload = ref(false)
+const uploadTask = ref<DailyTaskItem | null>(null)
+const uploadDesc = ref('')
+const videoPath = ref('')
+/** 本次新选的本地图片临时路径 */
+const imagePaths = ref<string[]>([])
+/** 服务端已有图片（只读展示） */
+const existingImages = ref<string[]>([])
+const existingVideo = ref('')
+const saving = ref(false)
+const MAX_IMAGES = 9
+const MAX_DESC = 200
+
+
+const isLogin = computed(() => !!memberStore.profile?.access_token)
+
+const nickname = computed(
+  () => memberStore.profile?.nickname || memberStore.profile?.user_name || '小朋友',
+)
+
+const weekNo = computed(() => plan.value?.week_no ?? 1)
+const dayNo = computed(() => plan.value?.day_no ?? 1)
+
+/** 营期进度：用相对天数估算（第 week 周 day 天 → 总第几天），默认 20 天结营 */
+const campTotalDays = 20
+const currentCampDay = computed(() => {
+  const w = weekNo.value || 1
+  const d = dayNo.value || 1
+  return Math.min(Math.max((w - 1) * 7 + d, 1), campTotalDays)
+})
+const progressPercent = computed(() =>
+  Math.min(100, Math.round((currentCampDay.value / campTotalDays) * 100)),
+)
+
+const tasks = computed(() => plan.value?.tasks || [])
+
+const uploadedCount = computed(
+  () => tasks.value.filter((t) => t.status === 'uploaded' || t.status === 'submitted').length,
+)
+
+const allDone = computed(
+  () => tasks.value.length > 0 && tasks.value.every((t) => t.status !== 'unfinished'),
+)
+
+const canSubmit = computed(
+  () =>
+    isLogin.value &&
+    plan.value?.status === 'draft' &&
+    allDone.value,
+)
+
+const submitHint = computed(() => {
+  if (!isLogin.value) return '请先登录'
+  if (!plan.value) return '暂无训练计划'
+  if (plan.value.status === 'submitted' || plan.value.status === 'commented') {
+    return '今日已提交'
+  }
+  if (tasks.value.length === 0) return '今日暂无任务'
+  if (!allDone.value) {
+    return `未上传任何动作（${uploadedCount.value}/${tasks.value.length}）`
+  }
+  return '一键提交今日打卡'
+})
+
+/** 任务展示用图标底色轮换 */
+const iconColors = ['#FFE8E8', '#FFF0E0', '#F0EBFF', '#E8F4FF', '#E8FFF0', '#FFF8E0']
+const iconFor = (task: DailyTaskItem, index: number) => {
+  if (task.icon_url) return { type: 'img' as const, src: task.icon_url }
+  // 按名称给简单 emoji 占位
+  const n = task.task_name || ''
+  let emoji = '💗'
+  if (n.includes('捏鼻')) emoji = '👃'
+  else if (n.includes('N点') || n.includes('n点')) emoji = '🥕'
+  else if (n.includes('弹唇') || n.includes('抿唇') || n.includes('口贴') || n.includes('纽扣'))
+    emoji = '❤️'
+  else if (n.includes('吹水')) emoji = '💧'
+  return { type: 'emoji' as const, emoji, bg: iconColors[index % iconColors.length] }
+}
+
+const loadData = async () => {
+  if (!isLogin.value) {
+    plan.value = null
+    coins.value = 0
+    return
+  }
+  loading.value = true
+  try {
+    const [today, profile] = await Promise.all([
+      getDailyTodayApi(),
+      getUserProfileApi().catch(() => null),
+    ])
+    plan.value = today
+    if (profile) {
+      coins.value = profile.available_coins ?? profile.total_coins ?? 0
+      if (memberStore.profile) {
+        memberStore.setProfile({
+          ...memberStore.profile,
+          nickname: profile.nickname,
+          avatar: profile.avatar,
+        })
+      }
+    }
+  } catch {
+    // http 已 toast
+  } finally {
+    loading.value = false
+  }
+}
+
+onShow(() => {
+  loadData()
+})
+
+const goLogin = () => {
+  uni.navigateTo({ url: '/pages/login/login' })
+}
+
+const onWatchVideo = (task: DailyTaskItem) => {
+  // 只传文件名，播放页再拼绝对 URL，避免中文路径双重编码 / query 过长导致黑屏
+  const file = resolveTeachVideoFile(task.task_name, task.teach_video_url)
+  if (!file) {
+    uni.showToast({ icon: 'none', title: '暂无教学视频' })
+    return
+  }
+  uni.navigateTo({
+    url: `/pages/video/play?file=${encodeURIComponent(file)}&title=${encodeURIComponent(
+      task.task_name || '教学视频',
+    )}`,
+  })
+}
+
+
+const onUpload = (task: DailyTaskItem) => {
+  if (!isLogin.value) {
+    goLogin()
+    return
+  }
+  if (plan.value?.status === 'submitted' || plan.value?.status === 'commented') {
+    uni.showToast({ icon: 'none', title: '今日已提交，不可再改' })
+    return
+  }
+  if (task.status === 'submitted') {
+    uni.showToast({ icon: 'none', title: '该动作已提交，不可再改' })
+    return
+  }
+  openUploadModal(task)
+}
+
+const openUploadModal = (task: DailyTaskItem) => {
+  uploadTask.value = task
+  uploadDesc.value = task.description || ''
+  existingVideo.value = task.video_url || ''
+  existingImages.value = [...(task.image_urls || [])]
+  videoPath.value = ''
+  imagePaths.value = []
+  showUpload.value = true
+}
+
+const closeUploadModal = () => {
+  if (saving.value) return
+  showUpload.value = false
+  uploadTask.value = null
+}
+
+const uploadSubtitle = computed(() => {
+  const t = uploadTask.value
+  if (!t) return ''
+  const req = (t.requirement || '').trim()
+  return req ? `${t.task_name} · ${req}` : t.task_name
+})
+
+const descCount = computed(() => uploadDesc.value.length)
+
+const chooseVideo = () => {
+  uni.chooseVideo({
+    sourceType: ['album', 'camera'],
+    compressed: true,
+    maxDuration: 60,
+    success: (res) => {
+      videoPath.value = res.tempFilePath
+      existingVideo.value = ''
+    },
+  })
+}
+
+const clearVideo = () => {
+  videoPath.value = ''
+  existingVideo.value = ''
+}
+
+const chooseImages = () => {
+  const remain = MAX_IMAGES - existingImages.value.length - imagePaths.value.length
+  if (remain <= 0) {
+    uni.showToast({ icon: 'none', title: `最多上传 ${MAX_IMAGES} 张图片` })
+    return
+  }
+  uni.chooseImage({
+    count: remain,
+    sizeType: ['compressed'],
+    sourceType: ['album', 'camera'],
+    success: (res) => {
+      const list = res.tempFilePaths || []
+      imagePaths.value = [...imagePaths.value, ...list].slice(
+        0,
+        MAX_IMAGES - existingImages.value.length,
+      )
+    },
+  })
+}
+
+const removeLocalImage = (idx: number) => {
+  imagePaths.value = imagePaths.value.filter((_, i) => i !== idx)
+}
+
+const onSaveUpload = async () => {
+  const task = uploadTask.value
+  if (!task || saving.value) return
+
+  const desc = uploadDesc.value.trim()
+  const hasNewVideo = !!videoPath.value
+  const hasNewImages = imagePaths.value.length > 0
+  const prevDesc = (task.description || '').trim()
+  const hasExistingMedia =
+    !!existingVideo.value || existingImages.value.length > 0 || !!(task.video_url || (task.image_urls && task.image_urls.length))
+  const descChanged = desc !== prevDesc
+
+  // 无任何新内容且描述也没改：直接关闭
+  if (!hasNewVideo && !hasNewImages && !descChanged) {
+    if (hasExistingMedia || prevDesc) {
+      showUpload.value = false
+      uploadTask.value = null
+      return
+    }
+    uni.showToast({ icon: 'none', title: '请上传视频/图片或填写描述' })
+    return
+  }
+  if (!hasNewVideo && !hasNewImages && !desc && !hasExistingMedia) {
+    uni.showToast({ icon: 'none', title: '请上传视频/图片或填写描述' })
+    return
+  }
+  if (desc.length > MAX_DESC) {
+    uni.showToast({ icon: 'none', title: `描述最多 ${MAX_DESC} 字` })
+    return
+  }
+
+
+  saving.value = true
+  uni.showLoading({ title: '保存中...', mask: true })
+  try {
+    await uploadCheckinApi({
+      checkin_id: task.checkin_id,
+      description: desc,
+      videoPath: videoPath.value || undefined,
+      imagePaths: imagePaths.value,
+    })
+    uni.showToast({ icon: 'success', title: '已保存' })
+    showUpload.value = false
+    uploadTask.value = null
+    await loadData()
+  } catch {
+    // toast 已在 service / http 中处理
+  } finally {
+    saving.value = false
+    uni.hideLoading()
+  }
+}
+
+
+const onSubmit = async () => {
+  if (!canSubmit.value || !plan.value) {
+    uni.showToast({ icon: 'none', title: submitHint.value })
+    return
+  }
+  try {
+    await submitDailyApi(plan.value.plan_date)
+    uni.showToast({ icon: 'success', title: '提交成功' })
+    await loadData()
+  } catch {
+    // toast 已处理
+  }
+}
+
+const onSwitchPlan = () => {
+  uni.showToast({ icon: 'none', title: '感冒方案切换开发中' })
+}
 </script>
 
 <template>
-  <view class="index">index</view>
+  <view class="page">
+    <!-- 顶部紫色区域 -->
+    <view class="hero">
+      <view class="hero-row">
+        <view class="week-label">WEEK {{ weekNo }} · DAY {{ dayNo }}</view>
+        <view class="hero-badge">
+          <text class="badge-dots">●●●</text>
+        </view>
+      </view>
+      <view class="greet">{{ nickname }}, 今天加油!</view>
+
+      <!-- 进度条 D1 → D20 -->
+      <view class="track-card">
+        <view class="track-line">
+          <view class="track-fill" :style="{ width: progressPercent + '%' }" />
+          <view class="node start" :class="{ active: currentCampDay >= 1 }">
+            <view class="node-icon rocket">🚀</view>
+            <text class="node-tag">D1</text>
+            <text class="node-label">开营</text>
+          </view>
+          <view
+            class="node end"
+            :class="{ active: currentCampDay >= campTotalDays }"
+            :style="{ left: '100%' }"
+          >
+            <view class="node-icon trophy">🏆</view>
+            <text class="node-tag">D{{ campTotalDays }}</text>
+            <text class="node-label">结营</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="hero-actions">
+        <view class="coin-pill">
+          <text class="coin-yen">¥</text>
+          <text class="coin-num">{{ coins }}</text>
+        </view>
+        <view class="switch-btn" @tap="onSwitchPlan">
+          <text>🌤 切换感冒方案</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 未登录 -->
+    <view v-if="!isLogin" class="login-tip card" @tap="goLogin">
+      <text>登录后查看今日训练任务</text>
+      <view class="login-link">去登录</view>
+    </view>
+
+    <!-- 任务列表 -->
+    <view v-else class="task-list">
+      <view v-if="loading && !plan" class="empty-tip">加载中...</view>
+      <view v-else-if="!tasks.length" class="empty-tip">今日暂无训练任务</view>
+
+      <view v-for="(task, index) in tasks" :key="task.checkin_id" class="task-card card">
+        <view class="task-main">
+          <view
+            class="task-icon"
+            :style="
+              iconFor(task, index).type === 'emoji'
+                ? { background: iconFor(task, index).bg }
+                : {}
+            "
+          >
+            <image
+              v-if="iconFor(task, index).type === 'img'"
+              class="task-icon-img"
+              :src="iconFor(task, index).src"
+              mode="aspectFill"
+            />
+            <text v-else class="task-emoji">{{ iconFor(task, index).emoji }}</text>
+          </view>
+          <view class="task-info">
+            <view class="task-name">
+              {{ task.task_name }}
+              <text
+                v-if="task.status === 'uploaded' || task.status === 'submitted'"
+                class="status-dot done"
+              >
+                ✓
+              </text>
+            </view>
+            <view class="task-req">{{ task.requirement || '按要求完成训练' }}</view>
+          </view>
+        </view>
+        <view class="task-actions">
+          <view
+            class="btn ghost"
+            :class="{ disabled: !hasTeachVideo(task.task_name, task.teach_video_url) }"
+            @tap="onWatchVideo(task)"
+          >
+            <text class="play-ico">▶</text>
+            看教学视频
+          </view>
+          <view class="btn primary" @tap="onUpload(task)">
+            上传内容 →
+          </view>
+        </view>
+      </view>
+
+      <view v-if="tasks.length" class="list-end">— 动作就这些啦 —</view>
+    </view>
+
+    <!-- 底部提交条 -->
+    <view class="submit-bar">
+      <view
+        class="submit-btn"
+        :class="{ ready: canSubmit, disabled: !canSubmit }"
+        @tap="onSubmit"
+      >
+        <text class="submit-ico">✈</text>
+        <text>{{ submitHint }}</text>
+      </view>
+    </view>
+
+    <!-- 上传打卡内容弹窗 -->
+    <view v-if="showUpload" class="upload-mask" @tap="closeUploadModal">
+      <view class="upload-sheet" @tap.stop>
+        <view class="upload-head">
+          <view class="upload-title-wrap">
+            <text class="upload-title">上传打卡内容</text>
+            <text class="upload-sub">{{ uploadSubtitle }}</text>
+          </view>
+          <view class="upload-close" @tap="closeUploadModal">×</view>
+        </view>
+
+        <!-- 视频 -->
+        <view class="upload-section">
+          <text class="sec-label">视频</text>
+          <text class="sec-hint">每个动作只用传一个视频,传练习的最后 30 秒视频</text>
+          <view class="media-row">
+            <view
+              v-if="!videoPath && !existingVideo"
+              class="media-add"
+              @tap="chooseVideo"
+            >
+              <text class="media-ico">📹</text>
+              <text class="media-add-text">点击上传</text>
+            </view>
+            <view v-else class="media-preview video-preview">
+              <video
+                v-if="videoPath"
+                class="preview-video"
+                :src="videoPath"
+                object-fit="cover"
+                :controls="false"
+                :show-center-play-btn="false"
+              />
+              <view v-else class="video-placeholder">
+                <text class="media-ico">▶</text>
+                <text class="media-add-text">已上传视频</text>
+              </view>
+              <view class="media-del" @tap="clearVideo">×</view>
+              <view class="media-rechoose" @tap="chooseVideo">重选</view>
+            </view>
+          </view>
+        </view>
+
+        <!-- 图片 -->
+        <view class="upload-section">
+          <text class="sec-label">图片</text>
+          <view class="media-row images-row">
+            <view
+              v-for="(url, idx) in existingImages"
+              :key="'e' + idx"
+              class="media-preview img-preview"
+            >
+              <image class="preview-img" :src="url" mode="aspectFill" />
+            </view>
+            <view
+              v-for="(path, idx) in imagePaths"
+              :key="'l' + idx"
+              class="media-preview img-preview"
+            >
+              <image class="preview-img" :src="path" mode="aspectFill" />
+              <view class="media-del" @tap="removeLocalImage(idx)">×</view>
+            </view>
+            <view
+              v-if="existingImages.length + imagePaths.length < MAX_IMAGES"
+              class="media-add"
+              @tap="chooseImages"
+            >
+              <text class="media-ico upload-arrow">↑</text>
+              <text class="media-add-text">点击上传</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 文字描述 -->
+        <view class="upload-section">
+          <view class="sec-label-row">
+            <text class="sec-label">文字描述</text>
+            <text class="sec-count">{{ descCount }} / {{ MAX_DESC }}</text>
+          </view>
+          <textarea
+            class="desc-input"
+            v-model="uploadDesc"
+            :maxlength="MAX_DESC"
+            placeholder="今天的训练感受、遇到的问题…"
+            placeholder-class="desc-ph"
+            :auto-height="false"
+          />
+        </view>
+
+        <view class="upload-tip">
+          <text class="tip-ico">💡</text>
+          <text class="tip-text">
+            视频/图片可任意上传;保存后媒体在后台继续传,关闭弹窗不影响。等所有动作都准备好后,回首页点「一键提交今日打卡」。
+          </text>
+        </view>
+
+        <view class="upload-footer">
+          <view class="footer-btn cancel" @tap="closeUploadModal">取消</view>
+          <view
+            class="footer-btn save"
+            :class="{ disabled: saving }"
+            @tap="onSaveUpload"
+          >
+            {{ saving ? '保存中…' : '保存' }}
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
 </template>
 
+
 <style lang="scss">
-//
+$purple: #7b5cff;
+$purple-deep: #6a4dff;
+$purple-soft: #9b7cff;
+$page-bg: #f0eef6;
+$gold: #e8a317;
+
+.page {
+  min-height: 100vh;
+  background: $page-bg;
+  padding-bottom: calc(160rpx + env(safe-area-inset-bottom));
+}
+
+.hero {
+  background: linear-gradient(165deg, $purple-deep 0%, $purple 48%, #8f7cff 100%);
+  padding: 32rpx 32rpx 40rpx;
+  border-radius: 0 0 40rpx 40rpx;
+  color: #fff;
+}
+
+.hero-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.week-label {
+  font-size: 22rpx;
+  letter-spacing: 2rpx;
+  opacity: 0.85;
+  font-weight: 500;
+}
+
+.hero-badge {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  .badge-dots {
+    font-size: 18rpx;
+    letter-spacing: 2rpx;
+    color: #fff;
+  }
+}
+
+.greet {
+  margin-top: 16rpx;
+  font-size: 44rpx;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.track-card {
+  margin-top: 32rpx;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 24rpx;
+  padding: 36rpx 48rpx 28rpx;
+}
+
+.track-line {
+  position: relative;
+  height: 8rpx;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 8rpx;
+  margin: 0 24rpx 48rpx;
+}
+
+.track-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: #fff;
+  border-radius: 8rpx;
+  transition: width 0.3s ease;
+}
+
+.node {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100rpx;
+
+  &.start {
+    left: 0;
+  }
+  &.end {
+    /* left 由 style 设置 */
+  }
+}
+
+.node-icon {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28rpx;
+  margin-bottom: 8rpx;
+  border: 4rpx solid rgba(255, 255, 255, 0.5);
+}
+
+.node.active .node-icon {
+  background: #ffd666;
+  border-color: #fff;
+}
+
+.node-tag {
+  position: absolute;
+  top: -36rpx;
+  font-size: 20rpx;
+  opacity: 0.9;
+}
+
+.node-label {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  opacity: 0.9;
+}
+
+.hero-actions {
+  margin-top: 28rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.coin-pill {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  background: #ffd666;
+  color: #8a5a00;
+  padding: 10rpx 24rpx;
+  border-radius: 999rpx;
+  font-weight: 700;
+
+  .coin-yen {
+    width: 32rpx;
+    height: 32rpx;
+    border-radius: 50%;
+    background: $gold;
+    color: #fff;
+    font-size: 18rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .coin-num {
+    font-size: 28rpx;
+  }
+}
+
+.switch-btn {
+  background: rgba(255, 255, 255, 0.2);
+  padding: 12rpx 24rpx;
+  border-radius: 999rpx;
+  font-size: 24rpx;
+}
+
+.card {
+  background: #fff;
+  border-radius: 28rpx;
+  box-shadow: 0 8rpx 28rpx rgba(90, 60, 180, 0.06);
+}
+
+.login-tip {
+  margin: 32rpx;
+  padding: 48rpx;
+  text-align: center;
+  color: #666;
+  font-size: 28rpx;
+
+  .login-link {
+    margin-top: 20rpx;
+    color: $purple;
+    font-weight: 600;
+  }
+}
+
+.task-list {
+  padding: 24rpx 28rpx 0;
+}
+
+.empty-tip {
+  text-align: center;
+  color: #aaa;
+  font-size: 28rpx;
+  padding: 80rpx 0;
+}
+
+.task-card {
+  padding: 28rpx 28rpx 24rpx;
+  margin-bottom: 24rpx;
+}
+
+.task-main {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 24rpx;
+}
+
+.task-icon {
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 24rpx;
+  background: #ffe8e8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 24rpx;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.task-icon-img {
+  width: 100%;
+  height: 100%;
+}
+
+.task-emoji {
+  font-size: 44rpx;
+}
+
+.task-info {
+  flex: 1;
+  min-width: 0;
+  padding-top: 4rpx;
+}
+
+.task-name {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #1a1a1a;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.status-dot.done {
+  font-size: 22rpx;
+  color: #fff;
+  background: #52c41a;
+  width: 32rpx;
+  height: 32rpx;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.task-req {
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  color: #999;
+  line-height: 1.4;
+}
+
+.task-actions {
+  display: flex;
+  gap: 20rpx;
+}
+
+.btn {
+  flex: 1;
+  height: 76rpx;
+  border-radius: 999rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26rpx;
+  font-weight: 500;
+
+  .play-ico {
+    margin-right: 8rpx;
+    font-size: 22rpx;
+  }
+
+  &.ghost {
+    background: #f0ebff;
+    color: $purple;
+
+    &.disabled {
+      opacity: 0.45;
+      color: #999;
+      background: #f2f2f2;
+    }
+  }
+
+  &.primary {
+    background: $purple;
+    color: #fff;
+    box-shadow: 0 8rpx 20rpx rgba(123, 92, 255, 0.35);
+  }
+}
+
+.list-end {
+  text-align: center;
+  color: #c8c2d8;
+  font-size: 24rpx;
+  padding: 16rpx 0 32rpx;
+}
+
+.submit-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 16rpx 32rpx calc(16rpx + env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(240, 238, 246, 0) 0%, $page-bg 30%);
+  z-index: 20;
+}
+
+.submit-btn {
+  height: 96rpx;
+  border-radius: 999rpx;
+  background: #e8e6f0;
+  color: #999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  font-size: 28rpx;
+
+  .submit-ico {
+    font-size: 30rpx;
+  }
+
+  &.ready {
+    background: linear-gradient(90deg, $purple-deep, $purple);
+    color: #fff;
+    box-shadow: 0 10rpx 28rpx rgba(123, 92, 255, 0.4);
+  }
+}
+
+/* ---------- 上传弹窗 ---------- */
+.upload-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(20, 16, 40, 0.45);
+  z-index: 100;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.upload-sheet {
+  width: 100%;
+  max-height: 88vh;
+  background: #fff;
+  border-radius: 32rpx 32rpx 0 0;
+  padding: 36rpx 36rpx calc(24rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+.upload-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 28rpx;
+}
+
+.upload-title-wrap {
+  flex: 1;
+  min-width: 0;
+  padding-right: 24rpx;
+}
+
+.upload-title {
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #1a1a1a;
+  display: block;
+}
+
+.upload-sub {
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  color: #999;
+  line-height: 1.4;
+  display: block;
+}
+
+.upload-close {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 50%;
+  color: #bbb;
+  font-size: 40rpx;
+  line-height: 52rpx;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.upload-section {
+  margin-bottom: 32rpx;
+}
+
+.sec-label {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #222;
+  display: block;
+}
+
+.sec-hint {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  color: #aaa;
+  line-height: 1.4;
+  display: block;
+}
+
+.sec-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16rpx;
+
+  .sec-label {
+    margin: 0;
+  }
+}
+
+.sec-count {
+  font-size: 24rpx;
+  color: #bbb;
+}
+
+.media-row {
+  margin-top: 20rpx;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20rpx;
+}
+
+.media-add {
+  width: 200rpx;
+  height: 200rpx;
+  border-radius: 24rpx;
+  border: 2rpx dashed #c4b5fd;
+  background: #f5f0ff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: $purple;
+}
+
+.media-ico {
+  font-size: 48rpx;
+  line-height: 1.2;
+  margin-bottom: 8rpx;
+
+  &.upload-arrow {
+    font-size: 44rpx;
+    font-weight: 600;
+  }
+}
+
+.media-add-text {
+  font-size: 24rpx;
+  color: $purple;
+}
+
+.media-preview {
+  width: 200rpx;
+  height: 200rpx;
+  border-radius: 24rpx;
+  overflow: hidden;
+  position: relative;
+  background: #f0ebff;
+}
+
+.preview-video,
+.preview-img {
+  width: 100%;
+  height: 100%;
+}
+
+.video-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: $purple;
+}
+
+.media-del {
+  position: absolute;
+  top: 8rpx;
+  right: 8rpx;
+  width: 40rpx;
+  height: 40rpx;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 28rpx;
+  line-height: 36rpx;
+  text-align: center;
+  z-index: 2;
+}
+
+.media-rechoose {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 48rpx;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 22rpx;
+  text-align: center;
+  line-height: 48rpx;
+  z-index: 2;
+}
+
+.desc-input {
+  width: 100%;
+  min-height: 160rpx;
+  box-sizing: border-box;
+  background: #f7f6fb;
+  border-radius: 20rpx;
+  padding: 24rpx;
+  font-size: 28rpx;
+  color: #333;
+  line-height: 1.5;
+}
+
+.desc-ph {
+  color: #c0bcd0;
+}
+
+.upload-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 12rpx;
+  background: #fff8e6;
+  border-radius: 16rpx;
+  padding: 20rpx 24rpx;
+  margin-bottom: 32rpx;
+}
+
+.tip-ico {
+  font-size: 28rpx;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
+.tip-text {
+  flex: 1;
+  font-size: 22rpx;
+  color: #a67c00;
+  line-height: 1.5;
+}
+
+.upload-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 24rpx;
+  padding-top: 8rpx;
+}
+
+.footer-btn {
+  min-width: 160rpx;
+  height: 72rpx;
+  padding: 0 36rpx;
+  border-radius: 999rpx;
+  font-size: 28rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &.cancel {
+    color: #999;
+    background: transparent;
+  }
+
+  &.save {
+    background: #e8e6f0;
+    color: #999;
+    font-weight: 600;
+  }
+
+  &.save:not(.disabled) {
+    background: linear-gradient(90deg, $purple-deep, $purple);
+    color: #fff;
+    box-shadow: 0 8rpx 20rpx rgba(123, 92, 255, 0.3);
+  }
+
+  &.disabled {
+    opacity: 0.6;
+  }
+}
 </style>
+

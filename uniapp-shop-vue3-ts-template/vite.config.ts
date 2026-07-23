@@ -15,6 +15,12 @@ export default defineConfig({
         target: 'http://localhost:20011',
         changeOrigin: true,
       },
+      // 打卡上传后的静态资源预览
+      '/uploads': {
+        target: 'http://localhost:20011',
+        changeOrigin: true,
+      },
     },
   },
+
 })

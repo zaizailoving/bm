@@ -120,7 +120,103 @@ namespace BM.Service
                 });
                 dbContext.SaveChanges();
             }
+
+            // 固定每日训练任务 + 方案（每天都展示同一套）
+            SeedFixedTrainingTasks(dbContext, now);
         }
+
+        /// <summary>
+        /// 预设固定任务模板，并为营期每一天写入相同的 training_plan。
+        /// 任务列表固定，每天都会展示。
+        /// </summary>
+        private static void SeedFixedTrainingTasks(SqlDBContext dbContext, DateTime now)
+        {
+            var templateSet = dbContext.GetDbSet<taskTemplateEntity>();
+
+            // 名称 -> (要求, 排序)
+            var fixedTasks = new (string name, string requirement, int sort)[]
+            {
+                ("贴闭口贴", "2组*10min", 10),
+                ("抿唇", "2组*20次", 20),
+                ("弹唇啵啵操", "2组*20次", 30),
+                ("拉纽扣", "2组*20次", 40),
+                ("捏鼻踱步", "2组*20次", 50),
+                ("按N点", "2组*1min", 60),
+            };
+
+            var changed = false;
+            foreach (var (name, requirement, sort) in fixedTasks)
+            {
+                if (templateSet.Any(t => t.name == name))
+                {
+                    continue;
+                }
+
+                templateSet.Add(new taskTemplateEntity
+                {
+                    name = name,
+                    requirement = requirement,
+                    icon_url = null,
+                    // 教学视频由前端 static/videos 按名称匹配；后端可后续补 URL
+                    teach_video_url = null,
+                    sort_order = sort
+                });
+                changed = true;
+            }
+
+            if (changed)
+            {
+                dbContext.SaveChanges();
+                Console.WriteLine("[DatabaseInitializer] 已写入固定任务模板。");
+            }
+
+            // 按固定顺序取全部模板 ID
+            var taskIds = templateSet
+                .AsEnumerable()
+                .Where(t => fixedTasks.Any(f => f.name == t.name))
+                .OrderBy(t => t.sort_order)
+                .ThenBy(t => t.id)
+                .Select(t => t.id)
+                .ToList();
+
+            if (taskIds.Count == 0)
+            {
+                return;
+            }
+
+            var taskIdsCsv = string.Join(",", taskIds);
+            var planSet = dbContext.GetDbSet<trainingPlanEntity>();
+
+            // 默认 3 周 × 7 天，每天同一套固定任务
+            const int weeks = 3;
+            const int daysPerWeek = 7;
+            var planAdded = false;
+            for (var week = 1; week <= weeks; week++)
+            {
+                for (var day = 1; day <= daysPerWeek; day++)
+                {
+                    if (planSet.Any(p => p.week_no == week && p.day_no == day))
+                    {
+                        continue;
+                    }
+
+                    planSet.Add(new trainingPlanEntity
+                    {
+                        week_no = week,
+                        day_no = day,
+                        task_ids = taskIdsCsv
+                    });
+                    planAdded = true;
+                }
+            }
+
+            if (planAdded)
+            {
+                dbContext.SaveChanges();
+                Console.WriteLine($"[DatabaseInitializer] 已写入固定训练方案（{weeks}周×{daysPerWeek}天，任务: {taskIdsCsv}）。");
+            }
+        }
+
 
         private static void EnsureSchemaCompatibility(SqlDBContext dbContext)
         {

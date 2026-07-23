@@ -51,3 +51,29 @@ export type MemberProfile = LoginOutput & {
     nickname?: string | null
     avatar?: string | null
 }
+
+/** 今日计划中的单条任务 */
+export type DailyTaskItem = {
+    checkin_id: number
+    task_id: number
+    task_name: string
+    icon_url: string | null
+    requirement: string | null
+    teach_video_url: string | null
+    status: 'unfinished' | 'uploaded' | 'submitted' | string
+    video_url: string | null
+    image_urls: string[]
+    description: string | null
+}
+
+/** 今日训练计划 */
+export type DailyToday = {
+    plan_date: string
+    week_no: number | null
+    day_no: number | null
+    status: 'draft' | 'submitted' | 'commented' | string
+    progress: string
+    tasks: DailyTaskItem[]
+}
+
+

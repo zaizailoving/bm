@@ -130,7 +130,7 @@ namespace BM.Service.Business.Services
 
         private async Task<(int weekNo, int dayNo, List<int> taskIds)> ResolveTrainingDayAsync(userEntity user, DateTime today)
         {
-            // 按用户创建日相对天数轮询训练方案；无方案时默认第1周第1天
+            // 按用户创建日相对天数轮询训练方案；无方案时用全部固定任务模板
             var trainingPlans = await _db.GetDbSet<trainingPlanEntity>()
                 .AsNoTracking()
                 .OrderBy(t => t.week_no)
@@ -139,12 +139,18 @@ namespace BM.Service.Business.Services
 
             if (trainingPlans.Count == 0)
             {
-                return (1, 1, new List<int>());
+                var allIds = await GetAllFixedTaskTemplateIdsAsync();
+                return (1, 1, allIds);
             }
 
             var dayIndex = Math.Max(0, (today.Date - user.create_time.Date).Days);
             var selected = trainingPlans[dayIndex % trainingPlans.Count];
             var ids = ParseTaskIds(selected.task_ids);
+            if (ids.Count == 0)
+            {
+                ids = await GetAllFixedTaskTemplateIdsAsync();
+            }
+
             return (selected.week_no, selected.day_no, ids);
         }
 
@@ -152,15 +158,35 @@ namespace BM.Service.Business.Services
         {
             if (weekNo == null || dayNo == null)
             {
-                return new List<int>();
+                return await GetAllFixedTaskTemplateIdsAsync();
             }
 
             var tp = await _db.GetDbSet<trainingPlanEntity>()
                 .AsNoTracking()
                 .FirstOrDefaultAsync(t => t.week_no == weekNo && t.day_no == dayNo);
 
-            return tp == null ? new List<int>() : ParseTaskIds(tp.task_ids);
+            if (tp == null)
+            {
+                return await GetAllFixedTaskTemplateIdsAsync();
+            }
+
+            var ids = ParseTaskIds(tp.task_ids);
+            return ids.Count > 0 ? ids : await GetAllFixedTaskTemplateIdsAsync();
         }
+
+        /// <summary>
+        /// 全部任务模板（固定每日任务），按 sort_order 排序
+        /// </summary>
+        private async Task<List<int>> GetAllFixedTaskTemplateIdsAsync()
+        {
+            return await _db.GetDbSet<taskTemplateEntity>()
+                .AsNoTracking()
+                .OrderBy(t => t.sort_order)
+                .ThenBy(t => t.id)
+                .Select(t => t.id)
+                .ToListAsync();
+        }
+
 
         private async Task EnsureCheckinsAsync(int dailyPlanId, List<int> taskIds)
         {
