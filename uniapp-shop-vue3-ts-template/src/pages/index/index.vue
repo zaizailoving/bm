@@ -460,7 +460,7 @@ const onSwitchPlan = () => {
           <view class="upload-close" @tap="closeUploadModal">×</view>
         </view>
 
-        <!-- 可滚动内容区：视频 / 图片 / 描述 / 提示 -->
+        <!-- 内容区可滚动；保存按钮紧跟文字描述下方 -->
         <scroll-view class="upload-body" scroll-y :show-scrollbar="false">
           <!-- 视频 -->
           <view class="upload-section">
@@ -525,7 +525,7 @@ const onSwitchPlan = () => {
           </view>
 
           <!-- 文字描述 -->
-          <view class="upload-section">
+          <view class="upload-section desc-section">
             <view class="sec-label-row">
               <text class="sec-label">文字描述</text>
               <text class="sec-count">{{ descCount }} / {{ MAX_DESC }}</text>
@@ -543,24 +543,26 @@ const onSwitchPlan = () => {
           <view class="upload-tip">
             <text class="tip-ico">💡</text>
             <text class="tip-text">
-              请至少上传一张图片或一个视频后点「保存」；首次保存可获得 5 金币。等所有动作都准备好后，回首页点「一键提交今日打卡」。
+              请至少上传一张图片或一个视频后点「保存」；首次保存可获得 5 金币。
             </text>
           </view>
-        </scroll-view>
 
-        <!-- 底部固定：始终在文字描述区下方可见 -->
-        <view class="upload-footer">
-          <view class="footer-btn cancel" @tap="closeUploadModal">取消</view>
-          <view
-            class="footer-btn save"
-            :class="{ disabled: !canSaveUpload, ready: canSaveUpload }"
-            @tap="onSaveUpload"
-          >
-            {{ saving ? '保存中…' : '保存' }}
+          <!-- 保存按钮：紧挨文字描述/提示下方，避免被 tabBar 遮挡 -->
+          <view class="upload-footer">
+            <view class="footer-btn cancel" @tap="closeUploadModal">取消</view>
+            <view
+              class="footer-btn save"
+              :class="{ disabled: !canSaveUpload, ready: canSaveUpload }"
+              @tap="onSaveUpload"
+            >
+              {{ saving ? '保存中…' : '保存' }}
+            </view>
           </view>
-        </view>
+        </scroll-view>
       </view>
     </view>
+
+
 
   </view>
 </template>
@@ -938,32 +940,36 @@ $gold: #e8a317;
   left: 0;
   right: 0;
   top: 0;
-  bottom: 0;
+  /* 避开 tabBar：uni-app 提供 --window-bottom */
+  bottom: var(--window-bottom, 0px);
   background: rgba(20, 16, 40, 0.45);
-  z-index: 100;
+  z-index: 1000;
   display: flex;
   align-items: flex-end;
   justify-content: center;
 }
 
 .upload-sheet {
+  position: relative;
   width: 100%;
-  max-height: 88vh;
+  max-height: 78vh;
   background: #fff;
   border-radius: 32rpx 32rpx 0 0;
-  padding: 36rpx 36rpx 0;
+  padding: 28rpx 32rpx 24rpx;
   box-sizing: border-box;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
 }
 
 .upload-body {
-  flex: 1;
-  min-height: 0;
-  max-height: 62vh;
+  /* uni-app scroll-view 需明确高度；预留标题区 */
+  height: 62vh;
+  max-height: calc(78vh - 140rpx);
+  width: 100%;
   box-sizing: border-box;
 }
+
 
 .upload-head {
   display: flex;
@@ -1047,9 +1053,9 @@ $gold: #e8a317;
 }
 
 .media-add {
-  width: 200rpx;
-  height: 200rpx;
-  border-radius: 24rpx;
+  width: 160rpx;
+  height: 160rpx;
+  border-radius: 20rpx;
   border: 2rpx dashed #c4b5fd;
   background: #f5f0ff;
   display: flex;
@@ -1076,9 +1082,9 @@ $gold: #e8a317;
 }
 
 .media-preview {
-  width: 200rpx;
-  height: 200rpx;
-  border-radius: 24rpx;
+  width: 160rpx;
+  height: 160rpx;
+  border-radius: 20rpx;
   overflow: hidden;
   position: relative;
   background: #f0ebff;
@@ -1131,11 +1137,12 @@ $gold: #e8a317;
 
 .desc-input {
   width: 100%;
-  min-height: 160rpx;
+  height: 140rpx;
+  min-height: 140rpx;
   box-sizing: border-box;
   background: #f7f6fb;
   border-radius: 20rpx;
-  padding: 24rpx;
+  padding: 20rpx;
   font-size: 28rpx;
   color: #333;
   line-height: 1.5;
@@ -1151,8 +1158,8 @@ $gold: #e8a317;
   gap: 12rpx;
   background: #fff8e6;
   border-radius: 16rpx;
-  padding: 20rpx 24rpx;
-  margin-bottom: 32rpx;
+  padding: 16rpx 20rpx;
+  margin-bottom: 8rpx;
 }
 
 .tip-ico {
@@ -1169,49 +1176,56 @@ $gold: #e8a317;
 }
 
 .upload-footer {
-  flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
   align-items: center;
   gap: 24rpx;
-  padding: 20rpx 0 calc(24rpx + env(safe-area-inset-bottom));
-  background: #fff;
-  border-top: 1rpx solid #f0eef6;
-  margin-top: 8rpx;
+  margin-top: 28rpx;
+  margin-bottom: 16rpx;
+  padding: 8rpx 0 8rpx;
+  box-sizing: border-box;
 }
 
 .footer-btn {
-  min-width: 160rpx;
-  height: 72rpx;
-  padding: 0 36rpx;
+  min-width: 168rpx;
+  height: 80rpx;
+  padding: 0 40rpx;
   border-radius: 999rpx;
-  font-size: 28rpx;
+  font-size: 30rpx;
   display: flex;
   align-items: center;
   justify-content: center;
 
   &.cancel {
-    color: #999;
-    background: transparent;
+    color: #666;
+    background: #f3f2f7;
   }
 
   &.save {
-    background: #e8e6f0;
-    color: #999;
+    background: linear-gradient(90deg, $purple-deep, $purple);
+    color: #fff;
     font-weight: 600;
+    box-shadow: 0 8rpx 20rpx rgba(123, 92, 255, 0.3);
+  }
+
+  &.save:not(.ready) {
+    background: linear-gradient(90deg, #b5a6ff, #9b8cff);
+    color: #fff;
+    opacity: 0.9;
   }
 
   &.save.ready {
     background: linear-gradient(90deg, $purple-deep, $purple);
     color: #fff;
-    box-shadow: 0 8rpx 20rpx rgba(123, 92, 255, 0.3);
+    box-shadow: 0 8rpx 20rpx rgba(123, 92, 255, 0.35);
+    opacity: 1;
   }
 
   &.disabled {
-    opacity: 0.55;
-    pointer-events: none;
+    pointer-events: auto;
   }
 }
+
 
 </style>
 
