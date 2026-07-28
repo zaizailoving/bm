@@ -134,15 +134,22 @@ namespace BM.Service
             var templateSet = dbContext.GetDbSet<taskTemplateEntity>();
 
             // 名称 -> (要求, 排序)
+            // 与前端 static/videos + teachVideo.ts 关键词对应
             var fixedTasks = new (string name, string requirement, int sort)[]
             {
-                ("贴闭口贴", "2组*10min", 10),
-                ("抿唇", "2组*20次", 20),
-                ("弹唇啵啵操", "2组*20次", 30),
-                ("拉纽扣", "2组*20次", 40),
-                ("捏鼻踱步", "2组*20次", 50),
-                ("按N点", "2组*1min", 60),
+                ("贴闭口贴", "白天20min视情况+晚上", 10),
+                ("抿唇", "2组*10min", 20),
+                ("弹唇啵啵操", "1组*15个", 30),
+                ("拉纽扣", "1组*各方向连续5次 每次3-10s", 40),
+                ("捏鼻踱步", "1组*憋不住放手算1组", 50),
+                ("N点训练", "1组*3min", 60),
+                ("吹水花", "1组*3min", 70),
+                ("啊咿呜哎", "1组（四个字-每个字发音3s）*15组", 80),
+                ("吹气球", "1组连续吹5个", 90),
+                ("抿压舌板", "2组*15min", 100),
+                ("腹式呼吸", "1组*3min", 110),
             };
+
 
             var changed = false;
             foreach (var (name, requirement, sort) in fixedTasks)
@@ -188,34 +195,42 @@ namespace BM.Service
             var planSet = dbContext.GetDbSet<trainingPlanEntity>();
 
             // 默认 3 周 × 7 天，每天同一套固定任务
+            // 已有方案若任务列表落后（新增模板后），同步更新 task_ids
             const int weeks = 3;
             const int daysPerWeek = 7;
-            var planAdded = false;
+            var planChanged = false;
             for (var week = 1; week <= weeks; week++)
             {
                 for (var day = 1; day <= daysPerWeek; day++)
                 {
-                    if (planSet.Any(p => p.week_no == week && p.day_no == day))
+                    var existing = planSet.FirstOrDefault(p => p.week_no == week && p.day_no == day);
+                    if (existing == null)
                     {
+                        planSet.Add(new trainingPlanEntity
+                        {
+                            week_no = week,
+                            day_no = day,
+                            task_ids = taskIdsCsv
+                        });
+                        planChanged = true;
                         continue;
                     }
 
-                    planSet.Add(new trainingPlanEntity
+                    if (!string.Equals(existing.task_ids, taskIdsCsv, StringComparison.Ordinal))
                     {
-                        week_no = week,
-                        day_no = day,
-                        task_ids = taskIdsCsv
-                    });
-                    planAdded = true;
+                        existing.task_ids = taskIdsCsv;
+                        planChanged = true;
+                    }
                 }
             }
 
-            if (planAdded)
+            if (planChanged)
             {
                 dbContext.SaveChanges();
-                Console.WriteLine($"[DatabaseInitializer] 已写入固定训练方案（{weeks}周×{daysPerWeek}天，任务: {taskIdsCsv}）。");
+                Console.WriteLine($"[DatabaseInitializer] 已同步固定训练方案（{weeks}周×{daysPerWeek}天，任务: {taskIdsCsv}）。");
             }
         }
+
 
 
         private static void EnsureSchemaCompatibility(SqlDBContext dbContext)

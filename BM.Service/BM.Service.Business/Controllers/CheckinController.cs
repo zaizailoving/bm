@@ -31,7 +31,7 @@ namespace BM.Service.Business.Controllers
         }
 
         /// <summary>
-        /// 上传打卡内容（视频/图片/描述）
+        /// 上传打卡内容（至少图片或视频；首次完成奖励 5 金币）
         /// </summary>
         /// <remarks>
         /// POST /api/checkin/upload
@@ -44,7 +44,7 @@ namespace BM.Service.Business.Controllers
         ///   description (string, optional)
         /// </remarks>
         [HttpPost("upload")]
-        [Consumes("multipart/form-data")]
+        [Consumes("multipart/form-data", "application/x-www-form-urlencoded")]
         [RequestSizeLimit(200_000_000)]
         public async Task<ResultModel<object>> Upload(
             [FromForm] int checkin_id,
@@ -63,7 +63,7 @@ namespace BM.Service.Business.Controllers
                 webRoot = Path.Combine(_env.ContentRootPath ?? AppContext.BaseDirectory, "wwwroot");
             }
 
-            var (ok, error) = await _checkinService.UploadAsync(
+            var (ok, error, coinsAwarded, availableCoins) = await _checkinService.UploadAsync(
                 CurrentUser.user_id,
                 checkin_id,
                 video,
@@ -76,7 +76,12 @@ namespace BM.Service.Business.Controllers
                 return ResultModel<object>.Error(error ?? "upload failed", 400);
             }
 
-            return ResultModel<object>.Success(new { uploaded = true }, "success");
+            return ResultModel<object>.Success(new
+            {
+                uploaded = true,
+                coins_awarded = coinsAwarded,
+                available_coins = availableCoins
+            }, "success");
         }
     }
 }

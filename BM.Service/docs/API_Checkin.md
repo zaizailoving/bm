@@ -31,7 +31,7 @@
 |------|------|
 | 方法 / 路径 | `POST /api/checkin/upload` |
 | 鉴权 | **需要登录**（JWT Bearer） |
-| Content-Type | `multipart/form-data` |
+| Content-Type | `multipart/form-data` 或 `application/x-www-form-urlencoded`（仅改描述） |
 | 请求体大小限制 | 约 200 MB（`RequestSizeLimit(200_000_000)`） |
 | 成功 code | 200 |
 | 失败 code | 400 / 401 |
@@ -48,9 +48,11 @@ Content-Type: multipart/form-data
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | checkin_id | int | 是 | 打卡记录 ID（来自 `GET /api/daily/today` 的 `tasks[].checkin_id`） |
-| video | file | 否 | 视频文件 |
-| images | file[] | 否 | 图片，可多张（同名字段多次上传） |
+| video | file | 条件 | 视频文件 |
+| images | file[] | 条件 | 图片，可多张（同名字段多次上传） |
 | description | string | 否 | 文字描述 |
+
+> **媒体必填**：本次上传的 video/images **或** 库中已有 `video_url` / `image_urls` 至少其一。仅文字描述且无媒体 → 拒绝。
 
 ### 支持的文件类型
 
@@ -64,12 +66,13 @@ Content-Type: multipart/form-data
 1. 校验 `checkin` 存在，且所属日计划的 `user_id` 为当前用户。
 2. 日计划已是 `submitted` / `commented` → 拒绝上传。
 3. 单条打卡已是 `submitted` → 拒绝。
-4. 至少需要：本次上传视频/图片/描述 **之一**，或库中已有 `video_url` / `image_urls`（允许只补描述等）。
+4. **至少需要一个图片或视频**（本次上传或库中已有）。
 5. 文件保存路径（相对站点根）：
    - `/uploads/checkin/{userId}/{checkinId}/video_yyyyMMddHHmmss.ext`
    - `/uploads/checkin/{userId}/{checkinId}/img_yyyyMMddHHmmss_N.ext`
 6. 新图片会 **追加** 到已有 `image_urls`（逗号分隔），不会清空历史图片。
 7. 上传成功后该打卡 `status = uploaded`，并刷新日计划 `progress`。
+8. **金币奖励**：当打卡从 `unfinished` 首次变为 `uploaded` 时，奖励 **5 金币**（`total_coins` / `available_coins` 同时 +5），并写入 `coins_log`（`source_type=checkin_reward`, `source_id=checkin_id`）。同一 checkin 不重复发奖。
 
 > 上传目录 `wwwroot/uploads/` 默认不纳入 Git（见根 `.gitignore`）。
 
@@ -77,9 +80,17 @@ Content-Type: multipart/form-data
 
 ```json
 {
-  "uploaded": true
+  "uploaded": true,
+  "coins_awarded": 5,
+  "available_coins": 15
 }
 ```
+
+| 字段 | 说明 |
+|------|------|
+| uploaded | 是否上传成功 |
+| coins_awarded | 本次新获得金币（首次完成一般为 5，重复保存为 0） |
+| available_coins | 当前可用金币余额 |
 
 ### 失败场景
 
@@ -91,7 +102,7 @@ Content-Type: multipart/form-data
 | 非本人计划 | 400 | `no permission for this checkin` |
 | 日计划已提交 | 400 | `daily plan already submitted` |
 | 打卡已提交 | 400 | `checkin already submitted` |
-| 无任何内容 | 400 | `please upload video/images or description` |
+| 无图片/视频 | 400 | `please upload at least one image or video` |
 | 视频类型不支持 | 400 | `unsupported video type` |
 | 图片类型不支持 | 400 | `unsupported image type: xxx` |
 
@@ -132,7 +143,9 @@ Content-Type: image/jpeg
   "code": 200,
   "errorMessage": "success",
   "data": {
-    "uploaded": true
+    "uploaded": true,
+    "coins_awarded": 5,
+    "available_coins": 5
   }
 }
 ```

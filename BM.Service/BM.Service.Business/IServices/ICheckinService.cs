@@ -9,9 +9,9 @@ namespace BM.Service.Business.IServices
     public interface ICheckinService : IDependency
     {
         /// <summary>
-        /// 上传打卡内容（视频/图片/描述）
+        /// 上传打卡内容（至少需要图片或视频；首次完成奖励 5 金币）
         /// </summary>
-        Task<(bool ok, string? error)> UploadAsync(
+        Task<(bool ok, string? error, int coinsAwarded, int availableCoins)> UploadAsync(
             int userId,
             int checkinId,
             IFormFile? video,

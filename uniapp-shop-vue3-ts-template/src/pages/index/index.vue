@@ -88,10 +88,14 @@ const iconFor = (task: DailyTaskItem, index: number) => {
   let emoji = '💗'
   if (n.includes('捏鼻')) emoji = '👃'
   else if (n.includes('N点') || n.includes('n点')) emoji = '🥕'
+  else if (n.includes('腹式') || n.includes('呼吸')) emoji = '🌬️'
+  else if (n.includes('气球')) emoji = '🎈'
+  else if (n.includes('舌板')) emoji = '👅'
   else if (n.includes('弹唇') || n.includes('抿唇') || n.includes('口贴') || n.includes('纽扣'))
     emoji = '❤️'
-  else if (n.includes('吹水')) emoji = '💧'
+  else if (n.includes('吹水') || n.includes('啊咿')) emoji = '💧'
   return { type: 'emoji' as const, emoji, bg: iconColors[index % iconColors.length] }
+
 }
 
 const loadData = async () => {
@@ -229,6 +233,21 @@ const removeLocalImage = (idx: number) => {
   imagePaths.value = imagePaths.value.filter((_, i) => i !== idx)
 }
 
+const hasUploadMedia = computed(() => {
+  const hasNewVideo = !!videoPath.value
+  const hasNewImages = imagePaths.value.length > 0
+  const hasExistingMedia =
+    !!existingVideo.value ||
+    existingImages.value.length > 0 ||
+    !!(
+      uploadTask.value?.video_url ||
+      (uploadTask.value?.image_urls && uploadTask.value.image_urls.length)
+    )
+  return hasNewVideo || hasNewImages || hasExistingMedia
+})
+
+const canSaveUpload = computed(() => hasUploadMedia.value && !saving.value)
+
 const onSaveUpload = async () => {
   const task = uploadTask.value
   if (!task || saving.value) return
@@ -236,41 +255,50 @@ const onSaveUpload = async () => {
   const desc = uploadDesc.value.trim()
   const hasNewVideo = !!videoPath.value
   const hasNewImages = imagePaths.value.length > 0
-  const prevDesc = (task.description || '').trim()
   const hasExistingMedia =
-    !!existingVideo.value || existingImages.value.length > 0 || !!(task.video_url || (task.image_urls && task.image_urls.length))
-  const descChanged = desc !== prevDesc
+    !!existingVideo.value ||
+    existingImages.value.length > 0 ||
+    !!(task.video_url || (task.image_urls && task.image_urls.length))
 
-  // 无任何新内容且描述也没改：直接关闭
+  // 至少要有一个图片或视频（新选或已有）
+  if (!hasNewVideo && !hasNewImages && !hasExistingMedia) {
+    uni.showToast({ icon: 'none', title: '请至少上传一张图片或一个视频' })
+    return
+  }
+
+  const prevDesc = (task.description || '').trim()
+  const descChanged = desc !== prevDesc
+  // 无新文件、描述也没改：直接关闭
   if (!hasNewVideo && !hasNewImages && !descChanged) {
-    if (hasExistingMedia || prevDesc) {
-      showUpload.value = false
-      uploadTask.value = null
-      return
-    }
-    uni.showToast({ icon: 'none', title: '请上传视频/图片或填写描述' })
+    showUpload.value = false
+    uploadTask.value = null
     return
   }
-  if (!hasNewVideo && !hasNewImages && !desc && !hasExistingMedia) {
-    uni.showToast({ icon: 'none', title: '请上传视频/图片或填写描述' })
-    return
-  }
+
   if (desc.length > MAX_DESC) {
     uni.showToast({ icon: 'none', title: `描述最多 ${MAX_DESC} 字` })
     return
   }
 
-
   saving.value = true
   uni.showLoading({ title: '保存中...', mask: true })
   try {
-    await uploadCheckinApi({
+    const result = await uploadCheckinApi({
       checkin_id: task.checkin_id,
       description: desc,
       videoPath: videoPath.value || undefined,
       imagePaths: imagePaths.value,
+      hasExistingMedia,
     })
-    uni.showToast({ icon: 'success', title: '已保存' })
+    if (typeof result.available_coins === 'number' && result.available_coins >= 0) {
+      coins.value = result.available_coins
+    }
+    const awarded = result.coins_awarded || 0
+    if (awarded > 0) {
+      uni.showToast({ icon: 'none', title: `保存成功，+${awarded} 金币` })
+    } else {
+      uni.showToast({ icon: 'success', title: '保存成功' })
+    }
     showUpload.value = false
     uploadTask.value = null
     await loadData()
@@ -281,6 +309,8 @@ const onSaveUpload = async () => {
     uni.hideLoading()
   }
 }
+
+
 
 
 const onSubmit = async () => {
@@ -376,17 +406,18 @@ const onSwitchPlan = () => {
             <text v-else class="task-emoji">{{ iconFor(task, index).emoji }}</text>
           </view>
           <view class="task-info">
-            <view class="task-name">
-              {{ task.task_name }}
-              <text
+            <view class="task-name-row">
+              <text class="task-name">{{ task.task_name }}</text>
+              <view
                 v-if="task.status === 'uploaded' || task.status === 'submitted'"
-                class="status-dot done"
+                class="done-badge"
               >
-                ✓
-              </text>
+                <text class="done-check">✓</text>
+              </view>
             </view>
             <view class="task-req">{{ task.requirement || '按要求完成训练' }}</view>
           </view>
+
         </view>
         <view class="task-actions">
           <view
@@ -429,96 +460,100 @@ const onSwitchPlan = () => {
           <view class="upload-close" @tap="closeUploadModal">×</view>
         </view>
 
-        <!-- 视频 -->
-        <view class="upload-section">
-          <text class="sec-label">视频</text>
-          <text class="sec-hint">每个动作只用传一个视频,传练习的最后 30 秒视频</text>
-          <view class="media-row">
-            <view
-              v-if="!videoPath && !existingVideo"
-              class="media-add"
-              @tap="chooseVideo"
-            >
-              <text class="media-ico">📹</text>
-              <text class="media-add-text">点击上传</text>
-            </view>
-            <view v-else class="media-preview video-preview">
-              <video
-                v-if="videoPath"
-                class="preview-video"
-                :src="videoPath"
-                object-fit="cover"
-                :controls="false"
-                :show-center-play-btn="false"
-              />
-              <view v-else class="video-placeholder">
-                <text class="media-ico">▶</text>
-                <text class="media-add-text">已上传视频</text>
+        <!-- 可滚动内容区：视频 / 图片 / 描述 / 提示 -->
+        <scroll-view class="upload-body" scroll-y :show-scrollbar="false">
+          <!-- 视频 -->
+          <view class="upload-section">
+            <text class="sec-label">视频</text>
+            <text class="sec-hint">每个动作只用传一个视频,传练习的最后 30 秒视频</text>
+            <view class="media-row">
+              <view
+                v-if="!videoPath && !existingVideo"
+                class="media-add"
+                @tap="chooseVideo"
+              >
+                <text class="media-ico">📹</text>
+                <text class="media-add-text">点击上传</text>
               </view>
-              <view class="media-del" @tap="clearVideo">×</view>
-              <view class="media-rechoose" @tap="chooseVideo">重选</view>
+              <view v-else class="media-preview video-preview">
+                <video
+                  v-if="videoPath"
+                  class="preview-video"
+                  :src="videoPath"
+                  object-fit="cover"
+                  :controls="false"
+                  :show-center-play-btn="false"
+                />
+                <view v-else class="video-placeholder">
+                  <text class="media-ico">▶</text>
+                  <text class="media-add-text">已上传视频</text>
+                </view>
+                <view class="media-del" @tap="clearVideo">×</view>
+                <view class="media-rechoose" @tap="chooseVideo">重选</view>
+              </view>
             </view>
           </view>
-        </view>
 
-        <!-- 图片 -->
-        <view class="upload-section">
-          <text class="sec-label">图片</text>
-          <view class="media-row images-row">
-            <view
-              v-for="(url, idx) in existingImages"
-              :key="'e' + idx"
-              class="media-preview img-preview"
-            >
-              <image class="preview-img" :src="url" mode="aspectFill" />
-            </view>
-            <view
-              v-for="(path, idx) in imagePaths"
-              :key="'l' + idx"
-              class="media-preview img-preview"
-            >
-              <image class="preview-img" :src="path" mode="aspectFill" />
-              <view class="media-del" @tap="removeLocalImage(idx)">×</view>
-            </view>
-            <view
-              v-if="existingImages.length + imagePaths.length < MAX_IMAGES"
-              class="media-add"
-              @tap="chooseImages"
-            >
-              <text class="media-ico upload-arrow">↑</text>
-              <text class="media-add-text">点击上传</text>
+          <!-- 图片 -->
+          <view class="upload-section">
+            <text class="sec-label">图片</text>
+            <view class="media-row images-row">
+              <view
+                v-for="(url, idx) in existingImages"
+                :key="'e' + idx"
+                class="media-preview img-preview"
+              >
+                <image class="preview-img" :src="url" mode="aspectFill" />
+              </view>
+              <view
+                v-for="(path, idx) in imagePaths"
+                :key="'l' + idx"
+                class="media-preview img-preview"
+              >
+                <image class="preview-img" :src="path" mode="aspectFill" />
+                <view class="media-del" @tap="removeLocalImage(idx)">×</view>
+              </view>
+              <view
+                v-if="existingImages.length + imagePaths.length < MAX_IMAGES"
+                class="media-add"
+                @tap="chooseImages"
+              >
+                <text class="media-ico upload-arrow">↑</text>
+                <text class="media-add-text">点击上传</text>
+              </view>
             </view>
           </view>
-        </view>
 
-        <!-- 文字描述 -->
-        <view class="upload-section">
-          <view class="sec-label-row">
-            <text class="sec-label">文字描述</text>
-            <text class="sec-count">{{ descCount }} / {{ MAX_DESC }}</text>
+          <!-- 文字描述 -->
+          <view class="upload-section">
+            <view class="sec-label-row">
+              <text class="sec-label">文字描述</text>
+              <text class="sec-count">{{ descCount }} / {{ MAX_DESC }}</text>
+            </view>
+            <textarea
+              class="desc-input"
+              v-model="uploadDesc"
+              :maxlength="MAX_DESC"
+              placeholder="今天的训练感受、遇到的问题…"
+              placeholder-class="desc-ph"
+              :auto-height="false"
+            />
           </view>
-          <textarea
-            class="desc-input"
-            v-model="uploadDesc"
-            :maxlength="MAX_DESC"
-            placeholder="今天的训练感受、遇到的问题…"
-            placeholder-class="desc-ph"
-            :auto-height="false"
-          />
-        </view>
 
-        <view class="upload-tip">
-          <text class="tip-ico">💡</text>
-          <text class="tip-text">
-            视频/图片可任意上传;保存后媒体在后台继续传,关闭弹窗不影响。等所有动作都准备好后,回首页点「一键提交今日打卡」。
-          </text>
-        </view>
+          <view class="upload-tip">
+            <text class="tip-ico">💡</text>
+            <text class="tip-text">
+              请至少上传一张图片或一个视频后点「保存」；首次保存可获得 5 金币。等所有动作都准备好后，回首页点「一键提交今日打卡」。
+            </text>
+          </view>
+        </scroll-view>
 
+        <!-- 底部固定：始终在文字描述区下方可见 -->
         <view class="upload-footer">
           <view class="footer-btn cancel" @tap="closeUploadModal">取消</view>
           <view
             class="footer-btn save"
-            :class="{ disabled: saving }"
+            :class="{ disabled: !canSaveUpload, ready: canSaveUpload }"
             @tap="onSaveUpload"
           >
             {{ saving ? '保存中…' : '保存' }}
@@ -526,6 +561,7 @@ const onSwitchPlan = () => {
         </view>
       </view>
     </view>
+
   </view>
 </template>
 
@@ -770,26 +806,47 @@ $gold: #e8a317;
   padding-top: 4rpx;
 }
 
+.task-name-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  min-width: 0;
+}
+
 .task-name {
   font-size: 32rpx;
   font-weight: 700;
   color: #1a1a1a;
-  display: flex;
-  align-items: center;
-  gap: 12rpx;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.status-dot.done {
-  font-size: 22rpx;
-  color: #fff;
-  background: #52c41a;
-  width: 32rpx;
-  height: 32rpx;
+/* 保存成功后的完成勾 */
+.done-badge {
+  flex-shrink: 0;
+  width: 44rpx;
+  height: 44rpx;
   border-radius: 50%;
-  display: inline-flex;
+  background: linear-gradient(145deg, #52d68a 0%, #22c55e 55%, #16a34a 100%);
+  box-shadow:
+    0 4rpx 12rpx rgba(34, 197, 94, 0.45),
+    0 0 0 4rpx rgba(34, 197, 94, 0.15);
+  display: flex;
   align-items: center;
   justify-content: center;
 }
+
+.done-check {
+  color: #fff;
+  font-size: 26rpx;
+  font-weight: 800;
+  line-height: 1;
+  transform: translateY(-1rpx);
+}
+
 
 .task-req {
   margin-top: 10rpx;
@@ -894,9 +951,18 @@ $gold: #e8a317;
   max-height: 88vh;
   background: #fff;
   border-radius: 32rpx 32rpx 0 0;
-  padding: 36rpx 36rpx calc(24rpx + env(safe-area-inset-bottom));
+  padding: 36rpx 36rpx 0;
   box-sizing: border-box;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.upload-body {
+  flex: 1;
+  min-height: 0;
+  max-height: 62vh;
+  box-sizing: border-box;
 }
 
 .upload-head {
@@ -1103,11 +1169,15 @@ $gold: #e8a317;
 }
 
 .upload-footer {
+  flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
   align-items: center;
   gap: 24rpx;
-  padding-top: 8rpx;
+  padding: 20rpx 0 calc(24rpx + env(safe-area-inset-bottom));
+  background: #fff;
+  border-top: 1rpx solid #f0eef6;
+  margin-top: 8rpx;
 }
 
 .footer-btn {
@@ -1131,15 +1201,17 @@ $gold: #e8a317;
     font-weight: 600;
   }
 
-  &.save:not(.disabled) {
+  &.save.ready {
     background: linear-gradient(90deg, $purple-deep, $purple);
     color: #fff;
     box-shadow: 0 8rpx 20rpx rgba(123, 92, 255, 0.3);
   }
 
   &.disabled {
-    opacity: 0.6;
+    opacity: 0.55;
+    pointer-events: none;
   }
 }
+
 </style>
 

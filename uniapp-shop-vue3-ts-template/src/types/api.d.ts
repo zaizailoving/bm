@@ -76,4 +76,13 @@ export type DailyToday = {
     tasks: DailyTaskItem[]
 }
 
+/** 打卡上传成功 data */
+export type UploadCheckinResult = {
+    uploaded: boolean
+    /** 本次新获得金币（首次完成一般为 5，重复保存为 0） */
+    coins_awarded: number
+    /** 当前可用金币余额 */
+    available_coins: number
+}
+
 

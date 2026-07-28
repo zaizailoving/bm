@@ -11,6 +11,9 @@ namespace BM.Service.Business.Services
     /// </summary>
     public class CheckinService : ICheckinService
     {
+        private const int CheckinRewardCoins = 5;
+        private const string RewardSourceType = "checkin_reward";
+
         private static readonly HashSet<string> VideoExts = new(StringComparer.OrdinalIgnoreCase)
         {
             ".mp4", ".mov", ".m4v", ".avi", ".webm"
@@ -28,7 +31,7 @@ namespace BM.Service.Business.Services
             _db = db;
         }
 
-        public async Task<(bool ok, string? error)> UploadAsync(
+        public async Task<(bool ok, string? error, int coinsAwarded, int availableCoins)> UploadAsync(
             int userId,
             int checkinId,
             IFormFile? video,
@@ -38,46 +41,61 @@ namespace BM.Service.Business.Services
         {
             if (userId <= 0)
             {
-                return (false, "invalid user");
+                return (false, "invalid user", 0, 0);
             }
 
             if (checkinId <= 0)
             {
-                return (false, "checkin_id is required");
+                return (false, "checkin_id is required", 0, 0);
             }
 
             var checkin = await _db.GetDbSet<taskCheckinEntity>()
                 .FirstOrDefaultAsync(c => c.id == checkinId);
             if (checkin == null)
             {
-                return (false, "checkin not found");
+                return (false, "checkin not found", 0, 0);
             }
 
             var plan = await _db.GetDbSet<dailyPlanEntity>()
                 .FirstOrDefaultAsync(p => p.id == checkin.daily_plan_id);
             if (plan == null || plan.user_id != userId)
             {
-                return (false, "no permission for this checkin");
+                return (false, "no permission for this checkin", 0, 0);
             }
 
             if (plan.status is "submitted" or "commented")
             {
-                return (false, "daily plan already submitted");
+                return (false, "daily plan already submitted", 0, 0);
             }
 
             if (checkin.status == "submitted")
             {
-                return (false, "checkin already submitted");
+                return (false, "checkin already submitted", 0, 0);
             }
 
             var hasVideo = video != null && video.Length > 0;
             var imageList = images?.Where(f => f != null && f.Length > 0).ToList() ?? new List<IFormFile>();
             var hasImages = imageList.Count > 0;
             var hasDesc = !string.IsNullOrWhiteSpace(description);
+            var hasExistingVideo = !string.IsNullOrWhiteSpace(checkin.video_url);
+            var hasExistingImages = !string.IsNullOrWhiteSpace(checkin.image_urls);
 
-            if (!hasVideo && !hasImages && !hasDesc && string.IsNullOrWhiteSpace(checkin.video_url) && string.IsNullOrWhiteSpace(checkin.image_urls))
+            // 必须至少有一个图片或视频（本次或已有）
+            if (!hasVideo && !hasImages && !hasExistingVideo && !hasExistingImages)
             {
-                return (false, "please upload video/images or description");
+                return (false, "please upload at least one image or video", 0, 0);
+            }
+
+            // 本次没有任何新内容也没有描述变更时，若已有媒体可视为成功（前端一般会拦截）
+            if (!hasVideo && !hasImages && !hasDesc)
+            {
+                // 已有媒体：直接返回当前余额，不重复发奖
+                var userBal = await _db.GetDbSet<userEntity>()
+                    .AsNoTracking()
+                    .Where(u => u.id == userId)
+                    .Select(u => u.available_coins)
+                    .FirstOrDefaultAsync();
+                return (true, null, 0, userBal);
             }
 
             if (string.IsNullOrWhiteSpace(webRootPath))
@@ -96,7 +114,7 @@ namespace BM.Service.Business.Services
                 var ext = Path.GetExtension(video!.FileName);
                 if (string.IsNullOrWhiteSpace(ext) || !VideoExts.Contains(ext))
                 {
-                    return (false, "unsupported video type");
+                    return (false, "unsupported video type", 0, 0);
                 }
 
                 var fileName = $"video_{DateTime.Now:yyyyMMddHHmmss}{ext.ToLowerInvariant()}";
@@ -127,7 +145,7 @@ namespace BM.Service.Business.Services
                     var ext = Path.GetExtension(img.FileName);
                     if (string.IsNullOrWhiteSpace(ext) || !ImageExts.Contains(ext))
                     {
-                        return (false, $"unsupported image type: {img.FileName}");
+                        return (false, $"unsupported image type: {img.FileName}", 0, 0);
                     }
 
                     index++;
@@ -149,6 +167,8 @@ namespace BM.Service.Business.Services
                 checkin.description = description!.Trim();
             }
 
+            var wasUnfinished = checkin.status == "unfinished"
+                || string.IsNullOrWhiteSpace(checkin.status);
             checkin.status = "uploaded";
             checkin.update_time = DateTime.Now;
 
@@ -157,18 +177,50 @@ namespace BM.Service.Business.Services
                 .Where(c => c.daily_plan_id == plan.id)
                 .ToListAsync();
             var total = allCheckins.Count;
-            var done = allCheckins.Count(c => c.id == checkin.id || c.status is "uploaded" or "submitted");
-            // checkin 尚未 Save，手动计 1 次当前
-            if (!allCheckins.Any(c => c.id == checkin.id && c.status is "uploaded" or "submitted"))
-            {
-                // 当前实体已是 uploaded，Count 已包含（同一 DbSet 跟踪）
-            }
-
-            done = allCheckins.Count(c => c.status is "uploaded" or "submitted");
+            var done = allCheckins.Count(c => c.status is "uploaded" or "submitted");
             plan.progress = $"{done}/{total}";
 
+            // 首次完成该打卡：奖励 5 金币（防重复：同 checkin 已有 checkin_reward 流水则不再发）
+            var coinsAwarded = 0;
+            var availableCoins = 0;
+            var user = await _db.GetDbSet<userEntity>()
+                .FirstOrDefaultAsync(u => u.id == userId);
+            if (user == null)
+            {
+                return (false, "user not found", 0, 0);
+            }
+
+            availableCoins = user.available_coins;
+
+            if (wasUnfinished)
+            {
+                var alreadyRewarded = await _db.GetDbSet<coinsLogEntity>()
+                    .AnyAsync(l =>
+                        l.user_id == userId
+                        && l.source_type == RewardSourceType
+                        && l.source_id == checkinId);
+
+                if (!alreadyRewarded)
+                {
+                    user.available_coins += CheckinRewardCoins;
+                    user.total_coins += CheckinRewardCoins;
+                    availableCoins = user.available_coins;
+                    coinsAwarded = CheckinRewardCoins;
+
+                    await _db.GetDbSet<coinsLogEntity>().AddAsync(new coinsLogEntity
+                    {
+                        user_id = userId,
+                        change_amount = CheckinRewardCoins,
+                        balance = availableCoins,
+                        source_type = RewardSourceType,
+                        source_id = checkinId,
+                        create_time = DateTime.Now
+                    });
+                }
+            }
+
             await _db.SaveChangesAsync();
-            return (true, null);
+            return (true, null, coinsAwarded, availableCoins);
         }
     }
 }

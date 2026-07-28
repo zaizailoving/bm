@@ -6,13 +6,20 @@
 
 /** 本地视频清单（file 需与 static/videos 下文件名一致，建议 ASCII） */
 const LOCAL_VIDEOS: { keywords: string[]; file: string }[] = [
+    { keywords: ['贴闭口贴', '闭口贴'], file: 'tie-bi-kou-tie.mp4' },
     { keywords: ['弹唇', '啵啵'], file: 'tan-chun-bobo.mp4' },
+    // 抿压舌板 需在 抿唇 之前，避免「抿」误匹配
+    { keywords: ['抿压舌板', '压舌板'], file: 'min-ya-she-ban.mp4' },
     { keywords: ['抿唇'], file: 'min-chun.mp4' },
     { keywords: ['拉纽扣', '纽扣'], file: 'la-niu-kou.mp4' },
     { keywords: ['捏鼻', '踱步'], file: 'nie-bi-duo-bu.mp4' },
+    { keywords: ['按N点', 'N点', 'n点'], file: 'n-dian-xun-lian.mp4' },
     { keywords: ['吹水花', '水花'], file: 'chui-shui-hua.mp4' },
-    { keywords: ['啊咿唔', '啊伊唔'], file: 'a-yi-wu.mp4' },
+    { keywords: ['啊咿呜哎', '啊咿唔', '啊咿呜'], file: 'a-yi-wu-ai.mp4' },
+    { keywords: ['吹气球', '气球'], file: 'chui-qi-qiu.mp4' },
+    { keywords: ['腹式呼吸', '腹式'], file: 'fu-shi-hu-xi.mp4' },
 ]
+
 
 /**
  * 拼装可播放的静态视频 URL

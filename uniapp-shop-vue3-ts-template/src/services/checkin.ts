@@ -1,6 +1,6 @@
 import { BASE_URL } from '@/utils/config'
 import { useMemberStore } from '@/stores'
-import type { ResultModel } from '@/types/api'
+import type { ResultModel, UploadCheckinResult } from '@/types/api'
 
 export type UploadCheckinParams = {
     checkin_id: number
@@ -9,21 +9,28 @@ export type UploadCheckinParams = {
     videoPath?: string
     /** 本地临时路径列表 */
     imagePaths?: string[]
+    /** 服务端已有图片/视频（允许仅改描述时提交） */
+    hasExistingMedia?: boolean
 }
 
 /**
  * 上传打卡内容：POST /api/checkin/upload (multipart)
- * uni.uploadFile 每次只能传一个文件，故视频/图片会顺序上传；
- * 描述与 checkin_id 放在第一次请求的 formData 中。
+ * 至少需要一个图片或视频（本次新选或已有）；首次完成返回 coins_awarded=5
  */
-export async function uploadCheckinApi(params: UploadCheckinParams): Promise<{ uploaded: boolean }> {
-    const { checkin_id, description, videoPath, imagePaths = [] } = params
+export async function uploadCheckinApi(params: UploadCheckinParams): Promise<UploadCheckinResult> {
+    const {
+        checkin_id,
+        description,
+        videoPath,
+        imagePaths = [],
+        hasExistingMedia = false,
+    } = params
     const hasVideo = !!videoPath
     const hasImages = imagePaths.length > 0
     const hasDesc = !!(description && description.trim())
 
-    if (!hasVideo && !hasImages && !hasDesc) {
-        throw new Error('请上传视频/图片或填写描述')
+    if (!hasVideo && !hasImages && !hasExistingMedia) {
+        throw new Error('请至少上传一张图片或一个视频')
     }
 
     const memberStore = useMemberStore()
@@ -36,16 +43,21 @@ export async function uploadCheckinApi(params: UploadCheckinParams): Promise<{ u
         Authorization: `Bearer ${token}`,
     }
 
-    // 无文件时：用 form 提交（仅描述）
+    // 无新文件：仅描述（服务端已有媒体）
     if (!hasVideo && !hasImages) {
-        return formPostUpload(checkin_id, description!.trim(), header)
+        return formPostUpload(checkin_id, hasDesc ? description!.trim() : '', header)
     }
 
     let firstDone = false
     const descOnce = hasDesc ? description!.trim() : undefined
+    let lastResult: UploadCheckinResult = {
+        uploaded: true,
+        coins_awarded: 0,
+        available_coins: 0,
+    }
 
     if (hasVideo && videoPath) {
-        await uploadOneFile({
+        lastResult = await uploadOneFile({
             filePath: videoPath,
             name: 'video',
             checkin_id,
@@ -56,7 +68,7 @@ export async function uploadCheckinApi(params: UploadCheckinParams): Promise<{ u
     }
 
     for (const path of imagePaths) {
-        await uploadOneFile({
+        lastResult = await uploadOneFile({
             filePath: path,
             name: 'images',
             checkin_id,
@@ -66,14 +78,14 @@ export async function uploadCheckinApi(params: UploadCheckinParams): Promise<{ u
         firstDone = true
     }
 
-    return { uploaded: true }
+    return lastResult
 }
 
 function formPostUpload(
     checkin_id: number,
     description: string,
     header: Record<string, string>,
-): Promise<{ uploaded: boolean }> {
+): Promise<UploadCheckinResult> {
     return new Promise((resolve, reject) => {
         uni.request({
             url: BASE_URL + '/api/checkin/upload',
@@ -104,7 +116,7 @@ function uploadOneFile(opts: {
     checkin_id: number
     description?: string
     header: Record<string, string>
-}): Promise<{ uploaded: boolean }> {
+}): Promise<UploadCheckinResult> {
     const formData: Record<string, string> = {
         checkin_id: String(opts.checkin_id),
     }
@@ -142,7 +154,7 @@ function uploadOneFile(opts: {
 function handleUploadResponse(
     statusCode: number,
     body: unknown,
-    resolve: (v: { uploaded: boolean }) => void,
+    resolve: (v: UploadCheckinResult) => void,
     reject: (e: Error) => void,
 ) {
     if (statusCode === 401) {
@@ -158,15 +170,25 @@ function handleUploadResponse(
             body && typeof body === 'object' && 'errorMessage' in body
                 ? String((body as ResultModel).errorMessage || `上传失败(${statusCode})`)
                 : `上传失败(${statusCode})`
-        uni.showToast({ icon: 'none', title: msg })
-        reject(new Error(msg))
+        const tip =
+            msg.includes('at least one image or video') || msg.includes('image or video')
+                ? '请至少上传一张图片或一个视频'
+                : msg
+        uni.showToast({ icon: 'none', title: tip })
+        reject(new Error(tip))
         return
     }
 
     if (body && typeof body === 'object' && 'isSuccess' in body) {
-        const result = body as ResultModel<{ uploaded: boolean }>
+        const result = body as ResultModel<UploadCheckinResult>
         if (result.isSuccess) {
-            resolve(result.data || { uploaded: true })
+            resolve(
+                result.data || {
+                    uploaded: true,
+                    coins_awarded: 0,
+                    available_coins: 0,
+                },
+            )
             return
         }
         if (result.code === 401) {
@@ -175,10 +197,14 @@ function handleUploadResponse(
             uni.navigateTo({ url: '/pages/login/login' })
         }
         const msg = result.errorMessage || '上传失败'
-        uni.showToast({ icon: 'none', title: msg })
-        reject(new Error(msg))
+        const tip =
+            msg.includes('at least one image or video') || msg.includes('image or video')
+                ? '请至少上传一张图片或一个视频'
+                : msg
+        uni.showToast({ icon: 'none', title: tip })
+        reject(new Error(tip))
         return
     }
 
-    resolve({ uploaded: true })
+    resolve({ uploaded: true, coins_awarded: 0, available_coins: 0 })
 }
