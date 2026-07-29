@@ -151,6 +151,24 @@ const onWatchVideo = (task: DailyTaskItem) => {
 }
 
 
+/** 是否「弹唇啵啵操」类任务（可进游戏打卡） */
+const isBoboTask = (task: DailyTaskItem) => {
+  const n = (task.task_name || '').replace(/\s/g, '')
+  return n.includes('弹唇') || n.includes('啵啵') || n.includes('波波')
+}
+
+const onGameCheckin = (task: DailyTaskItem) => {
+  if (!isLogin.value) {
+    goLogin()
+    return
+  }
+  uni.navigateTo({
+    url: `/pages/game/bobo?checkin_id=${encodeURIComponent(String(task.checkin_id))}&name=${encodeURIComponent(
+      task.task_name || '弹唇啵啵操',
+    )}`,
+  })
+}
+
 const onUpload = (task: DailyTaskItem) => {
   if (!isLogin.value) {
     goLogin()
@@ -166,6 +184,7 @@ const onUpload = (task: DailyTaskItem) => {
   }
   openUploadModal(task)
 }
+
 
 const openUploadModal = (task: DailyTaskItem) => {
   uploadTask.value = task
@@ -419,7 +438,7 @@ const onSwitchPlan = () => {
           </view>
 
         </view>
-        <view class="task-actions">
+        <view class="task-actions" :class="{ 'three-cols': isBoboTask(task) }">
           <view
             class="btn ghost"
             :class="{ disabled: !hasTeachVideo(task.task_name, task.teach_video_url) }"
@@ -428,11 +447,19 @@ const onSwitchPlan = () => {
             <text class="play-ico">▶</text>
             看教学视频
           </view>
+          <view
+            v-if="isBoboTask(task)"
+            class="btn game"
+            @tap="onGameCheckin(task)"
+          >
+            🎮 游戏打卡
+          </view>
           <view class="btn primary" @tap="onUpload(task)">
             上传内容 →
           </view>
         </view>
       </view>
+
 
       <view v-if="tasks.length" class="list-end">— 动作就这些啦 —</view>
     </view>
@@ -859,7 +886,18 @@ $gold: #e8a317;
 
 .task-actions {
   display: flex;
-  gap: 20rpx;
+  gap: 16rpx;
+
+  &.three-cols {
+    flex-wrap: wrap;
+
+    .btn {
+      flex: 1 1 30%;
+      min-width: 0;
+      font-size: 24rpx;
+      padding: 0 8rpx;
+    }
+  }
 }
 
 .btn {
@@ -888,12 +926,20 @@ $gold: #e8a317;
     }
   }
 
+  &.game {
+    background: linear-gradient(90deg, #ffb347, #ff7eb3);
+    color: #fff;
+    box-shadow: 0 8rpx 20rpx rgba(255, 126, 179, 0.35);
+    font-weight: 600;
+  }
+
   &.primary {
     background: $purple;
     color: #fff;
     box-shadow: 0 8rpx 20rpx rgba(123, 92, 255, 0.35);
   }
 }
+
 
 .list-end {
   text-align: center;

@@ -43,6 +43,15 @@
         "navigationBarBackgroundColor": "#000000",
         "navigationBarTextStyle": "white"
       }
+    },
+    {
+      "path": "pages/game/bobo",
+      "style": {
+        "navigationBarTitleText": "弹唇啵啵操",
+        "navigationBarBackgroundColor": "#3b1fa0",
+        "navigationBarTextStyle": "white",
+        "navigationStyle": "custom"
+      }
     }
   ],
   "globalStyle": {
