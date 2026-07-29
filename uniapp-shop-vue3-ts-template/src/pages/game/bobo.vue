@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
+import { completeGameCheckinApi } from '@/services/checkin'
+
 
 /** 关卡目标：点亮 5 个圆圈 */
 const TARGET = 5
@@ -166,10 +168,35 @@ const playAgain = () => {
   startGame()
 }
 
-const finishAndBack = () => {
-  uni.showToast({ icon: 'success', title: '游戏打卡完成' })
-  setTimeout(() => goBack(), 600)
+const finishing = ref(false)
+
+/** 完成打卡：任务勾选 + 首次奖励 5 金币 */
+const finishAndBack = async () => {
+  if (finishing.value) return
+  finishing.value = true
+  try {
+    if (!checkinId.value) {
+      uni.showToast({ icon: 'none', title: '缺少任务信息，请从首页进入' })
+      finishing.value = false
+      return
+    }
+    const result = await completeGameCheckinApi({
+      checkin_id: checkinId.value,
+      description: '游戏打卡完成（弹唇啵啵操）',
+    })
+    const coins = result?.coins_awarded ?? 0
+    if (coins > 0) {
+      uni.showToast({ icon: 'success', title: `打卡成功 +${coins}金币` })
+    } else {
+      uni.showToast({ icon: 'success', title: '已完成打卡' })
+    }
+    setTimeout(() => goBack(), 700)
+  } catch {
+    // toast 已在 service / http 中处理
+    finishing.value = false
+  }
 }
+
 </script>
 
 <template>
@@ -344,11 +371,14 @@ const finishAndBack = () => {
       </view>
 
       <view class="success-actions">
-        <view class="s-btn ghost" @tap="playAgain">再玩一次</view>
-        <view class="s-btn primary" @tap="finishAndBack">完成打卡</view>
+        <view class="s-btn ghost" :class="{ disabled: finishing }" @tap="playAgain">再玩一次</view>
+        <view class="s-btn primary" :class="{ disabled: finishing }" @tap="finishAndBack">
+          {{ finishing ? '提交中…' : '完成打卡 · +5金币' }}
+        </view>
       </view>
-      <text class="success-note">记得回首页用「上传内容」提交视频/图片给老师点评哦</text>
+      <text class="success-note">完成后将自动勾选任务并获得金币；也可回首页再上传视频给老师点评</text>
     </view>
+
   </view>
 </template>
 
@@ -902,7 +932,13 @@ const finishAndBack = () => {
     background: linear-gradient(90deg, #ffb347, #ff7a59);
     color: #3b1a00;
   }
+
+  &.disabled {
+    opacity: 0.55;
+    pointer-events: none;
+  }
 }
+
 
 .success-note {
   margin-top: 28rpx;

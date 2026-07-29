@@ -19,20 +19,27 @@ const onLogin = async () => {
     uni.showToast({ icon: 'none', title: '请输入用户名' })
     return
   }
-  if (!password) {
+  // 用户名 mock：免密进入演示模式；其它账号仍需密码
+  const isMock = user_name.toLowerCase() === 'mock'
+  if (!isMock && !password) {
     uni.showToast({ icon: 'none', title: '请输入密码' })
     return
   }
 
+
   if (loading.value) return
   loading.value = true
   try {
-    const data = await loginApi({ user_name, password })
+    const data = await loginApi({ user_name, password: password || 'mock' })
     memberStore.setProfile({
       ...data,
-      nickname: data.user_name,
+      nickname: isMock ? 'student' : data.user_name,
     })
-    uni.showToast({ icon: 'success', title: '登录成功' })
+    uni.showToast({
+      icon: 'success',
+      title:  '登录成功',
+    })
+
     setTimeout(() => {
       // 有上一页则返回，否则进「我的」
       const pages = getCurrentPages()
@@ -103,8 +110,9 @@ const goBack = () => {
       </button>
 
       <view class="tips">
-        <text>默认管理员账号：admin / 1（以服务端 Seed 配置为准）</text>
+        <text>演示账号：mock（任意密码或不填）· 管理员：admin / 1</text>
       </view>
+
 
       <view class="link-row" @tap="goBack">
         <text class="link">暂不登录，返回</text>

@@ -222,5 +222,119 @@ namespace BM.Service.Business.Services
             await _db.SaveChangesAsync();
             return (true, null, coinsAwarded, availableCoins);
         }
+
+        /// <summary>
+        /// 游戏打卡完成：无需图片/视频，状态改为 uploaded，首次完成 +5 金币
+        /// </summary>
+        public async Task<(bool ok, string? error, int coinsAwarded, int availableCoins)> CompleteByGameAsync(
+            int userId,
+            int checkinId,
+            string? description)
+        {
+            if (userId <= 0)
+            {
+                return (false, "invalid user", 0, 0);
+            }
+
+            if (checkinId <= 0)
+            {
+                return (false, "checkin_id is required", 0, 0);
+            }
+
+            var checkin = await _db.GetDbSet<taskCheckinEntity>()
+                .FirstOrDefaultAsync(c => c.id == checkinId);
+            if (checkin == null)
+            {
+                return (false, "checkin not found", 0, 0);
+            }
+
+            var plan = await _db.GetDbSet<dailyPlanEntity>()
+                .FirstOrDefaultAsync(p => p.id == checkin.daily_plan_id);
+            if (plan == null || plan.user_id != userId)
+            {
+                return (false, "no permission for this checkin", 0, 0);
+            }
+
+            if (plan.status is "submitted" or "commented")
+            {
+                return (false, "daily plan already submitted", 0, 0);
+            }
+
+            if (checkin.status == "submitted")
+            {
+                return (false, "checkin already submitted", 0, 0);
+            }
+
+            var wasUnfinished = checkin.status == "unfinished"
+                || string.IsNullOrWhiteSpace(checkin.status);
+
+            // 已完成：不重复发奖，可更新描述
+            if (!string.IsNullOrWhiteSpace(description))
+            {
+                checkin.description = description.Trim();
+            }
+            else if (wasUnfinished || string.IsNullOrWhiteSpace(checkin.description))
+            {
+                checkin.description = "游戏打卡完成（弹唇啵啵操）";
+            }
+
+            // 游戏完成视为已有媒体凭证（占位标记，避免后续上传校验）
+            if (string.IsNullOrWhiteSpace(checkin.image_urls) && string.IsNullOrWhiteSpace(checkin.video_url))
+            {
+                checkin.image_urls = "game://bobo-complete";
+            }
+
+            checkin.status = "uploaded";
+            checkin.update_time = DateTime.Now;
+
+            var allCheckins = await _db.GetDbSet<taskCheckinEntity>()
+                .Where(c => c.daily_plan_id == plan.id)
+                .ToListAsync();
+            var total = allCheckins.Count;
+            var done = allCheckins.Count(c => c.status is "uploaded" or "submitted");
+            plan.progress = $"{done}/{total}";
+
+            var coinsAwarded = 0;
+            var user = await _db.GetDbSet<userEntity>()
+                .FirstOrDefaultAsync(u => u.id == userId);
+            if (user == null)
+            {
+                return (false, "user not found", 0, 0);
+            }
+
+            var availableCoins = user.available_coins;
+
+            if (wasUnfinished)
+            {
+                var alreadyRewarded = await _db.GetDbSet<coinsLogEntity>()
+                    .AnyAsync(l =>
+                        l.user_id == userId
+                        && l.source_type == RewardSourceType
+                        && l.source_id == checkinId);
+
+                if (!alreadyRewarded)
+                {
+                    user.available_coins += CheckinRewardCoins;
+                    user.total_coins += CheckinRewardCoins;
+                    availableCoins = user.available_coins;
+                    coinsAwarded = CheckinRewardCoins;
+
+                    await _db.GetDbSet<coinsLogEntity>().AddAsync(new coinsLogEntity
+                    {
+                        user_id = userId,
+                        change_amount = CheckinRewardCoins,
+                        balance = availableCoins,
+                        source_type = RewardSourceType,
+                        source_id = checkinId,
+                        create_time = DateTime.Now
+                    });
+                }
+            }
+
+            await _db.SaveChangesAsync();
+            return (true, null, coinsAwarded, availableCoins);
+        }
     }
 }
+
+

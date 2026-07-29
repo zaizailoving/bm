@@ -18,5 +18,15 @@ namespace BM.Service.Business.IServices
             IEnumerable<IFormFile>? images,
             string? description,
             string webRootPath);
+
+        /// <summary>
+        /// 游戏打卡完成（无需媒体；首次完成奖励 5 金币）
+        /// </summary>
+        Task<(bool ok, string? error, int coinsAwarded, int availableCoins)> CompleteByGameAsync(
+            int userId,
+            int checkinId,
+            string? description);
     }
 }
+
+

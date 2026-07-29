@@ -164,7 +164,65 @@ curl -X POST "http://localhost:20011/api/checkin/upload" ^
 
 ---
 
+## 2. 游戏打卡完成
+
+### 基本信息
+
+| 项目 | 说明 |
+|------|------|
+| 方法 / 路径 | `POST /api/checkin/game-complete` |
+| 鉴权 | **需要登录**（JWT Bearer） |
+| Content-Type | `application/json` |
+| 成功 code | 200 |
+| 失败 code | 400 / 401 |
+
+### 请求体
+
+```json
+{
+  "checkin_id": 1,
+  "description": "游戏打卡完成（弹唇啵啵操）"
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| checkin_id | int | 是 | 打卡记录 ID |
+| description | string | 否 | 文字描述；默认「游戏打卡完成（弹唇啵啵操）」 |
+
+### 业务规则
+
+1. 无需上传图片/视频；用于「弹唇啵啵操」等游戏通关后完成打卡。
+2. 将打卡 `status` 设为 `uploaded`，并刷新日计划 `progress`。
+3. 若尚无媒体，写入占位 `image_urls = game://bobo-complete`（前端展示时会过滤）。
+4. **首次**从未完成变为 `uploaded` 时奖励 **5 金币**（与普通上传一致，同 checkin 不重复发奖）。
+5. 日计划已 `submitted`/`commented`，或单条已 `submitted` → 拒绝。
+
+### 成功响应 `data`
+
+与上传接口相同：
+
+```json
+{
+  "uploaded": true,
+  "coins_awarded": 5,
+  "available_coins": 35
+}
+```
+
+### curl
+
+```bash
+curl -X POST "http://localhost:20011/api/checkin/game-complete" ^
+  -H "Authorization: Bearer 你的access_token" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"checkin_id\":1,\"description\":\"游戏打卡完成\"}"
+```
+
+---
+
 ## 访问已上传文件
+
 
 静态文件路径形如：
 

@@ -1,6 +1,7 @@
 import { BASE_URL, REQUEST_TIMEOUT } from './config'
 import { useMemberStore } from '@/stores'
 import type { ResultModel } from '@/types/api'
+import { isMockToken, mockHttpRequest } from './mock'
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
@@ -15,10 +16,24 @@ type RequestOptions = {
 
 /**
  * 封装 uni.request，对接 BM.Service ResultModel
+ * 若当前为 mock 登录会话，则走本地模拟，不请求后端
  */
 export const http = <T = unknown>(options: RequestOptions): Promise<T> => {
     const memberStore = useMemberStore()
     const token = memberStore.profile?.access_token
+
+    // Mock 模式：本地模拟接口
+    if (isMockToken(token)) {
+        return mockHttpRequest<T>({
+            url: options.url,
+            method: options.method,
+            data: options.data,
+        }).catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : '请求失败'
+            uni.showToast({ icon: 'none', title: msg })
+            return Promise.reject(err instanceof Error ? err : new Error(msg))
+        })
+    }
 
     const header: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -79,6 +94,7 @@ export const http = <T = unknown>(options: RequestOptions): Promise<T> => {
         })
     })
 }
+
 
 function handleUnauthorized(skip?: boolean) {
     const memberStore = useMemberStore()

@@ -1,6 +1,10 @@
 import { BASE_URL } from '@/utils/config'
 import { useMemberStore } from '@/stores'
+import { httpPost } from '@/utils/http'
 import type { ResultModel, UploadCheckinResult } from '@/types/api'
+import { isMockToken, mockDelay, mockCompleteByGame, mockUploadCheckin } from '@/utils/mock'
+
+
 
 export type UploadCheckinParams = {
     checkin_id: number
@@ -39,9 +43,28 @@ export async function uploadCheckinApi(params: UploadCheckinParams): Promise<Upl
         throw new Error('请先登录')
     }
 
+    // Mock 模式：本地更新任务状态与金币，不实际上传
+    if (isMockToken(token)) {
+        await mockDelay(450)
+        try {
+            return mockUploadCheckin({
+                checkin_id,
+                description,
+                videoPath,
+                imagePaths,
+                hasExistingMedia,
+            })
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : '上传失败'
+            uni.showToast({ icon: 'none', title: msg })
+            throw e instanceof Error ? e : new Error(msg)
+        }
+    }
+
     const header: Record<string, string> = {
         Authorization: `Bearer ${token}`,
     }
+
 
     // 无新文件：仅描述（服务端已有媒体）
     if (!hasVideo && !hasImages) {
@@ -81,7 +104,44 @@ export async function uploadCheckinApi(params: UploadCheckinParams): Promise<Upl
     return lastResult
 }
 
+/**
+ * 游戏打卡完成：POST /api/checkin/game-complete
+ * 无需媒体；首次完成返回 coins_awarded=5
+ */
+export async function completeGameCheckinApi(params: {
+    checkin_id: number
+    description?: string
+}): Promise<UploadCheckinResult> {
+    const { checkin_id, description } = params
+    if (!checkin_id) {
+        throw new Error('缺少打卡任务')
+    }
+
+    const memberStore = useMemberStore()
+    const token = memberStore.profile?.access_token
+    if (!token) {
+        throw new Error('请先登录')
+    }
+
+    if (isMockToken(token)) {
+        await mockDelay(400)
+        try {
+            return mockCompleteByGame({ checkin_id, description })
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : '打卡失败'
+            uni.showToast({ icon: 'none', title: msg })
+            throw e instanceof Error ? e : new Error(msg)
+        }
+    }
+
+    return httpPost<UploadCheckinResult>('/api/checkin/game-complete', {
+        checkin_id,
+        description,
+    })
+}
+
 function formPostUpload(
+
     checkin_id: number,
     description: string,
     header: Record<string, string>,

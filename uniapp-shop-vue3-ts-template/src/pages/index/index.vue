@@ -186,15 +186,20 @@ const onUpload = (task: DailyTaskItem) => {
 }
 
 
+/** 过滤游戏占位媒体，避免首页展示无效图片 */
+const realMediaUrls = (urls?: string[] | null) =>
+  (urls || []).filter((u) => u && !String(u).startsWith('game://'))
+
 const openUploadModal = (task: DailyTaskItem) => {
   uploadTask.value = task
   uploadDesc.value = task.description || ''
   existingVideo.value = task.video_url || ''
-  existingImages.value = [...(task.image_urls || [])]
+  existingImages.value = realMediaUrls(task.image_urls)
   videoPath.value = ''
   imagePaths.value = []
   showUpload.value = true
 }
+
 
 const closeUploadModal = () => {
   if (saving.value) return

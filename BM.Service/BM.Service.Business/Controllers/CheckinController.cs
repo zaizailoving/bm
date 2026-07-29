@@ -83,5 +83,49 @@ namespace BM.Service.Business.Controllers
                 available_coins = availableCoins
             }, "success");
         }
+
+        /// <summary>
+        /// 游戏打卡完成（无需媒体；首次完成奖励 5 金币）
+        /// </summary>
+        /// <remarks>
+        /// POST /api/checkin/game-complete
+        /// Header: Authorization: Bearer {jwt_token}
+        /// Body JSON: { "checkin_id": 1, "description": "可选" }
+        /// </remarks>
+        [HttpPost("game-complete")]
+        public async Task<ResultModel<object>> GameComplete([FromBody] GameCompleteInput? body)
+        {
+            if (CurrentUser == null || CurrentUser.user_id <= 0)
+            {
+                return ResultModel<object>.Error("Sorry, please sign in first!", 401);
+            }
+
+            var checkinId = body?.checkin_id ?? 0;
+            var (ok, error, coinsAwarded, availableCoins) = await _checkinService.CompleteByGameAsync(
+                CurrentUser.user_id,
+                checkinId,
+                body?.description);
+
+            if (!ok)
+            {
+                return ResultModel<object>.Error(error ?? "game complete failed", 400);
+            }
+
+            return ResultModel<object>.Success(new
+            {
+                uploaded = true,
+                coins_awarded = coinsAwarded,
+                available_coins = availableCoins
+            }, "success");
+        }
+    }
+
+    /// <summary>游戏打卡完成请求体</summary>
+    public class GameCompleteInput
+    {
+        public int checkin_id { get; set; }
+        public string? description { get; set; }
     }
 }
+
+
