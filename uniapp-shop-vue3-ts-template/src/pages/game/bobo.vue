@@ -1,94 +1,194 @@
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+/**
+ * 弹唇啵啵操 · 人脸动作训练
+ * App / 手机内直接开前置摄像头识别「抿唇蓄力 → 弹唇发射」，不跳转外部网页
+ */
+import { ref, computed, onUnmounted, nextTick } from 'vue'
+import { onLoad, onHide, onShow, onUnload } from '@dcloudio/uni-app'
 import { completeGameCheckinApi } from '@/services/checkin'
+import FaceCam from '@/components/FaceCam.vue'
+import type { FaceLipSnapshot } from '@/utils/faceLip'
+import {
+  ensureCameraPermission,
+  promptOpenCameraSettings,
+} from '@/utils/cameraPermission'
 
 
-/** 关卡目标：点亮 5 个圆圈 */
 const TARGET = 5
+const CHARGE_MS = 8000
+const CHARGE_TICK = 80
+const CHARGE_STEP = (100 / CHARGE_MS) * CHARGE_TICK
 
 type Phase = 'intro' | 'playing' | 'success'
 
 const phase = ref<Phase>('intro')
+const score = ref(0)
+const energy = ref(0)
+const charging = ref(false)
+const readyToFire = ref(false)
+const blasting = ref(false)
+const monsterVisible = ref(true)
+const monsterFlying = ref(false)
+const paused = ref(false)
+const finishing = ref(false)
+const statusBarHeight = ref(20)
 const taskName = ref('弹唇啵啵操')
 const checkinId = ref(0)
 
-/** 已轰飞数量 / 圆圈点亮数 */
-const score = ref(0)
-/** 能量 0–100 */
-const energy = ref(0)
-/** 是否正在抿唇蓄力 */
-const charging = ref(false)
-/** 能量是否已满，可发射 */
-const readyToFire = ref(false)
-/** 怪物是否在场 */
-const monsterVisible = ref(true)
-/** 怪物被轰飞中 */
-const monsterFlying = ref(false)
-/** 发射特效 */
-const blasting = ref(false)
-/** 提示文案 */
-const tipText = ref('小炮手准备！抿住小嘴巴给能量炮充电，能量满后啵地弹一下！')
-const paused = ref(false)
+const faceEnabled = ref(false)
+const faceStarting = ref(false)
+const faceReady = ref(false)
+const faceDetected = ref(false)
+const faceStatus = ref('')
+const faceError = ref('')
+/** >0 启动摄像头；0 停止。递增可强制重启 */
+const camRunToken = ref(0)
 
 let chargeTimer: ReturnType<typeof setInterval> | null = null
-let spawnTimer: ReturnType<typeof setTimeout> | null = null
+let startWatchTimer: ReturnType<typeof setTimeout> | null = null
+let lastAutoFireAt = 0
+const AUTO_FIRE_COOLDOWN_MS = 900
+
 
 const progressDots = computed(() =>
-  Array.from({ length: TARGET }, (_, i) => ({
-    lit: i < score.value,
-  })),
+  Array.from({ length: TARGET }, (_, i) => ({ lit: i < score.value })),
 )
-
-const energyLabel = computed(() => {
-  if (readyToFire.value) return 'MAX'
-  return `${Math.round(energy.value)}%`
-})
 
 const energyFull = computed(() => energy.value >= 100)
 
-onLoad((query) => {
-  if (query?.name) {
+const tipText = computed(() => {
+  // 有识别状态文案时优先展示（避免一直卡在「启动中」）
+  if (faceError.value) return faceError.value
+  if (blasting.value) return '💥 啵！轰飞张嘴怪！'
+  if (readyToFire.value) return '能量已满！做一次「弹唇啵」即可发射'
+  if (charging.value) return '检测到抿唇，正在蓄力… 保持嘴唇抿紧'
+  if (faceReady.value && faceDetected.value && faceStatus.value) return faceStatus.value
+  if (faceReady.value && !faceDetected.value) {
+    return faceStatus.value || '未检测到人脸，请正对镜头、光线充足'
+  }
+  if (faceEnabled.value && faceStatus.value) return faceStatus.value
+  if (faceStarting.value) return faceStatus.value || '正在启动摄像头与人脸识别…'
+  if (!faceEnabled.value) return '请允许摄像头权限，把脸对准画面中央'
+  if (faceStatus.value) return faceStatus.value
+  return '请抿紧嘴唇蓄力，充满后再弹唇啵一下'
+})
+
+
+const energyLabel = computed(() => {
+  if (readyToFire.value) return '满'
+  if (charging.value) return `${Math.floor(energy.value)}%`
+  return '蓄力'
+})
+
+onLoad((q) => {
+  try {
+    const sys = uni.getSystemInfoSync()
+    statusBarHeight.value = sys.statusBarHeight || 20
+  } catch {
+    /* ignore */
+  }
+  if (q?.name) {
     try {
-      taskName.value = decodeURIComponent(String(query.name))
+      taskName.value = decodeURIComponent(String(q.name))
     } catch {
-      taskName.value = String(query.name)
+      taskName.value = String(q.name)
     }
   }
-  if (query?.checkin_id) {
-    checkinId.value = Number(query.checkin_id) || 0
+  if (q?.checkin_id) {
+    const n = Number(q.checkin_id)
+    if (!Number.isNaN(n) && n > 0) checkinId.value = n
   }
+})
+
+onHide(() => {
+  stopCharge()
+  stopFace()
+  if (phase.value === 'playing') paused.value = true
+})
+
+onShow(() => {
+  // 从后台回来：若仍在对战且未暂停意图为继续，可手动点继续；摄像头在 resume 时再开
+})
+
+onUnload(() => {
+  cleanupAll()
 })
 
 onUnmounted(() => {
-  stopCharge()
-  if (spawnTimer) clearTimeout(spawnTimer)
+  cleanupAll()
 })
 
-const goBack = () => {
+function cleanupAll() {
   stopCharge()
-  uni.navigateBack({ fail: () => uni.switchTab({ url: '/pages/index/index' }) })
+  stopFace()
 }
 
-const startGame = () => {
+function goBack() {
+  cleanupAll()
+  uni.navigateBack({
+    fail: () => uni.switchTab({ url: '/pages/index/index' }),
+  })
+}
+
+function togglePause() {
+  if (phase.value !== 'playing') return
+  paused.value = !paused.value
+  if (paused.value) {
+    stopCharge()
+    // 暂停时关掉摄像头省电/释放
+    stopFace()
+  } else {
+    void startFaceDetect()
+  }
+}
+
+/** App 端先申请原生摄像头权限；被拒时弹窗引导去系统设置 */
+async function requestAppCameraPermission(): Promise<boolean> {
+  const result = await ensureCameraPermission(true)
+  return result.granted
+}
+
+
+async function startGame() {
   score.value = 0
   energy.value = 0
   readyToFire.value = false
-  charging.value = false
+  blasting.value = false
   monsterVisible.value = true
   monsterFlying.value = false
-  blasting.value = false
   paused.value = false
-  tipText.value = '小炮手准备！长按「抿唇蓄力」给能量炮充电～'
+  faceError.value = ''
   phase.value = 'playing'
+  // 等对战区 / FaceCam 挂载后再开摄像头
+  await nextTick()
+  await startFaceDetect()
 }
 
-const togglePause = () => {
-  paused.value = !paused.value
-  if (paused.value) stopCharge()
+function resetRoundVisual() {
+  energy.value = 0
+  readyToFire.value = false
+  blasting.value = false
+  monsterFlying.value = false
+  monsterVisible.value = true
 }
 
-const stopCharge = () => {
+function startCharge() {
+  if (paused.value || readyToFire.value || blasting.value || !monsterVisible.value) return
+  if (charging.value) return
+  charging.value = true
+  chargeTimer = setInterval(() => {
+    if (paused.value) return
+    energy.value = Math.min(100, energy.value + CHARGE_STEP)
+    if (energy.value >= 100) {
+      energy.value = 100
+      stopCharge()
+      readyToFire.value = true
+      uni.vibrateShort?.({})
+    }
+  }, CHARGE_TICK)
+}
+
+function stopCharge() {
   charging.value = false
   if (chargeTimer) {
     clearInterval(chargeTimer)
@@ -96,153 +196,297 @@ const stopCharge = () => {
   }
 }
 
-/** 长按开始蓄力（模拟抿唇） */
-const onChargeStart = () => {
-  if (phase.value !== 'playing' || paused.value || readyToFire.value || blasting.value) return
-  if (!monsterVisible.value || monsterFlying.value) return
-  charging.value = true
-  tipText.value = '抿住小嘴巴，给能量炮充电中…'
-  if (chargeTimer) clearInterval(chargeTimer)
-  chargeTimer = setInterval(() => {
-    if (paused.value) return
-    // 约 8 秒蓄满（每 80ms +1）
-    energy.value = Math.min(100, energy.value + 1.25)
-    if (energy.value >= 100) {
-      energy.value = 100
-      readyToFire.value = true
-      stopCharge()
-      tipText.value = '能量满啦！啵地弹一下，发射！'
-      uni.vibrateShort?.({ type: 'medium' })
-    }
-  }, 80)
-}
-
-const onChargeEnd = () => {
-  stopCharge()
-  if (!readyToFire.value && phase.value === 'playing' && !blasting.value) {
-    tipText.value = energy.value > 0
-      ? '继续长按「抿唇蓄力」，把能量蓄满～'
-      : '小炮手准备！长按「抿唇蓄力」给能量炮充电～'
-  }
-}
-
-/** 弹唇发射 */
-const onFire = () => {
-  if (phase.value !== 'playing' || paused.value) return
-  if (!readyToFire.value || blasting.value) {
-    if (!readyToFire.value) {
-      uni.showToast({ icon: 'none', title: '先抿唇把能量蓄满哦' })
-    }
-    return
-  }
-  if (!monsterVisible.value || monsterFlying.value) return
-
+function onFire() {
+  if (paused.value || !readyToFire.value || blasting.value || !monsterVisible.value) return
   blasting.value = true
+  readyToFire.value = false
+  stopCharge()
   monsterFlying.value = true
-  tipText.value = '啵！张嘴怪被轰飞啦！'
-  uni.vibrateShort?.({ type: 'heavy' })
+  uni.vibrateShort?.({})
 
   setTimeout(() => {
     monsterVisible.value = false
     monsterFlying.value = false
     blasting.value = false
-    energy.value = 0
-    readyToFire.value = false
-    score.value = Math.min(TARGET, score.value + 1)
+    score.value += 1
 
     if (score.value >= TARGET) {
-      tipText.value = '太棒了！圆圈全部点亮，训练成功！'
+      stopFace()
       phase.value = 'success'
+      uni.showToast({ icon: 'success', title: '训练成功！' })
       return
     }
 
-    tipText.value = `已轰飞 ${score.value}/${TARGET} 只，下一只马上出现…`
-    spawnTimer = setTimeout(() => {
-      monsterVisible.value = true
-      tipText.value = '新的张嘴怪出现了！继续抿唇蓄力～'
-    }, 900)
-  }, 650)
+    setTimeout(() => {
+      resetRoundVisual()
+    }, 500)
+  }, 700)
 }
 
-const playAgain = () => {
-  startGame()
+/** 上次收到 snapshot 的时间戳，用于诊断 */
+let lastSnapshotAt = 0
+
+async function startFaceDetect() {
+  // 如果正在启动中，不重复触发
+  if (faceStarting.value) return
+  if (phase.value !== 'playing') return
+  // 如果摄像头已启用且近期有数据到达，说明工作正常，无需重启
+  if (faceEnabled.value && lastSnapshotAt > 0 && Date.now() - lastSnapshotAt < 5000) return
+
+  // 强制重启：先停掉旧会话
+  if (faceEnabled.value) {
+    console.log('[bobo] 摄像头已启用但无数据，强制重启')
+    stopFace()
+    await new Promise((r) => setTimeout(r, 300))
+  }
+
+  faceStarting.value = true
+  faceError.value = ''
+  faceStatus.value = '正在请求摄像头权限…'
+  faceReady.value = false
+  faceDetected.value = false
+  lastSnapshotAt = 0
+
+  const ok = await requestAppCameraPermission()
+  if (!ok) {
+    faceStarting.value = false
+    faceError.value = '未获得摄像头权限，请在系统设置中允许本应用使用摄像头'
+    faceStatus.value = faceError.value
+    // ensureCameraPermission(true) 已自动弹「去设置」窗口
+    return
+  }
+
+  if (phase.value !== 'playing' || paused.value) {
+    faceStarting.value = false
+    return
+  }
+
+  faceStatus.value = '正在打开前置摄像头…'
+  // 递增 token，触发 FaceCam(renderjs) 启动
+  // 用 performance.now() 保证每次值不同（比 Date.now() 精度更高）
+  camRunToken.value = (typeof performance !== 'undefined' ? performance.now() : Date.now())
+
+  // 兜底：部分机型 renderjs→逻辑层回调延迟/丢失时，不要永远停在「启动中」
+  if (startWatchTimer) clearTimeout(startWatchTimer)
+  startWatchTimer = setTimeout(() => {
+    if (phase.value !== 'playing' || paused.value) return
+    if (faceStarting.value && !faceEnabled.value) {
+      // 用户已能看到预览时，至少解除启动态，继续等识别结果
+      faceEnabled.value = true
+      faceStarting.value = false
+      if (!faceStatus.value || faceStatus.value.includes('打开') || faceStatus.value.includes('请求')) {
+        faceStatus.value = '摄像头已开启，正在加载/等待人脸识别…'
+      }
+    }
+  }, 2500)
 }
 
-const finishing = ref(false)
+function stopFace() {
+  stopCharge()
+  lastSnapshotAt = 0
+  if (startWatchTimer) {
+    clearTimeout(startWatchTimer)
+    startWatchTimer = null
+  }
+  camRunToken.value = 0
+  faceEnabled.value = false
+  faceStarting.value = false
+  faceReady.value = false
+  faceDetected.value = false
+}
 
-/** 完成打卡：任务勾选 + 首次奖励 5 金币 */
-const finishAndBack = async () => {
-  if (finishing.value) return
-  finishing.value = true
-  try {
-    if (!checkinId.value) {
-      uni.showToast({ icon: 'none', title: '缺少任务信息，请从首页进入' })
-      finishing.value = false
-      return
-    }
-    const result = await completeGameCheckinApi({
-      checkin_id: checkinId.value,
-      description: '游戏打卡完成（弹唇啵啵操）',
-    })
-    const coins = result?.coins_awarded ?? 0
-    if (coins > 0) {
-      uni.showToast({ icon: 'success', title: `打卡成功 +${coins}金币` })
-    } else {
-      uni.showToast({ icon: 'success', title: '已完成打卡' })
-    }
-    setTimeout(() => goBack(), 700)
-  } catch {
-    // toast 已在 service / http 中处理
-    finishing.value = false
+function onCamStarted() {
+  faceEnabled.value = true
+  faceStarting.value = false
+  faceError.value = ''
+  if (!faceStatus.value || faceStatus.value.includes('打开') || faceStatus.value.includes('请求')) {
+    faceStatus.value = '摄像头已开启，正在加载人脸模型…'
   }
 }
 
+function onCamError(msg: string) {
+  if (startWatchTimer) {
+    clearTimeout(startWatchTimer)
+    startWatchTimer = null
+  }
+  faceStarting.value = false
+  faceEnabled.value = false
+  faceReady.value = false
+  faceError.value = msg || '摄像头启动失败'
+  faceStatus.value = faceError.value
+  camRunToken.value = 0
+
+  const lower = (msg || '').toLowerCase()
+  const isPermission =
+    lower.includes('权限') ||
+    lower.includes('允许') ||
+    lower.includes('notallowed') ||
+    lower.includes('permission') ||
+    lower.includes('denied')
+
+  if (isPermission) {
+    void promptOpenCameraSettings(
+      msg ||
+        '训练需要使用前置摄像头。请在系统设置中允许本应用使用「摄像头」后返回，再点继续重试。',
+    )
+  } else {
+    uni.showModal({
+      title: '摄像头/识别异常',
+      content: faceError.value,
+      confirmText: '重试',
+      cancelText: '取消',
+      success: (res) => {
+        if (res.confirm && phase.value === 'playing' && !paused.value) {
+          void startFaceDetect()
+        }
+      },
+    })
+  }
+}
+
+
+function onCamStatus(msg: string) {
+  if (msg) faceStatus.value = msg
+  // 有状态回传说明 renderjs→逻辑层通道通了，解除纯启动态
+  if (faceStarting.value) {
+    faceEnabled.value = true
+    faceStarting.value = false
+    lastSnapshotAt = Date.now() // 记录通信成功时间
+  }
+}
+
+function onFaceSnapshot(s: FaceLipSnapshot) {
+  // 任意 snapshot 都说明 renderjs 通信成功，记录时间戳
+  lastSnapshotAt = Date.now()
+
+  if (faceStarting.value) {
+    faceStarting.value = false
+    faceEnabled.value = true
+  }
+  if (startWatchTimer) {
+    clearTimeout(startWatchTimer)
+    startWatchTimer = null
+  }
+
+  faceReady.value = s.ready
+  faceDetected.value = s.faceDetected
+  faceStatus.value = s.statusText || faceStatus.value
+  if (s.error) {
+    faceError.value = s.error
+  } else if (s.ready) {
+    // 识别就绪后清掉启动期错误
+    faceError.value = ''
+  }
+  if (s.ready || s.faceDetected) {
+    faceEnabled.value = true
+    faceStarting.value = false
+  }
+
+  if (phase.value !== 'playing' || paused.value) {
+    stopCharge()
+    return
+  }
+  if (!s.ready || !s.faceDetected) {
+    stopCharge()
+    return
+  }
+
+  // 抿唇 → 自动蓄力
+  if (s.isPursed && !readyToFire.value && !blasting.value && monsterVisible.value) {
+    startCharge()
+  } else if (!s.isPursed && charging.value) {
+    stopCharge()
+  }
+
+  // 弹唇 → 能量满时自动发射
+  if (s.isPop && readyToFire.value && !blasting.value) {
+    const now = Date.now()
+    if (now - lastAutoFireAt >= AUTO_FIRE_COOLDOWN_MS) {
+      lastAutoFireAt = now
+      onFire()
+    }
+  }
+}
+
+function playAgain() {
+  startGame()
+}
+
+async function finishAndBack() {
+  if (finishing.value) return
+  finishing.value = true
+  try {
+    if (checkinId.value > 0) {
+      const result = await completeGameCheckinApi({
+        checkin_id: checkinId.value,
+        description: '游戏训练完成：弹唇啵啵操',
+      })
+      const coins = result.coins_awarded || 0
+      uni.showToast({
+        icon: 'success',
+        title: coins > 0 ? `打卡成功 +${coins}金币` : '已记录训练',
+        duration: 1800,
+      })
+      await new Promise((r) => setTimeout(r, 600))
+    } else {
+      uni.showToast({ icon: 'none', title: '未关联任务，仅本地完成' })
+      await new Promise((r) => setTimeout(r, 500))
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : '提交失败'
+    uni.showToast({ icon: 'none', title: msg })
+    finishing.value = false
+    return
+  }
+  finishing.value = false
+  cleanupAll()
+  uni.navigateBack({
+    fail: () => uni.switchTab({ url: '/pages/index/index' }),
+  })
+}
 </script>
 
 <template>
   <view class="game-page">
-    <!-- 自定义顶栏 -->
-    <view class="nav" :style="{ paddingTop: 'calc(12rpx + env(safe-area-inset-top))' }">
-      <view class="nav-btn" @tap="goBack">×</view>
+    <view class="nav" :style="{ paddingTop: statusBarHeight + 'px' }">
+      <view class="nav-btn" @tap="goBack">‹</view>
       <view class="nav-title-wrap">
-        <text class="nav-title">爱脸动动 · 今日训练</text>
-        <text class="nav-sub">弹唇啵啵操 · 游戏打卡</text>
+        <text class="nav-title">{{ taskName || '弹唇啵啵操' }}</text>
+        <text class="nav-sub">人脸动作 · 自动识别</text>
       </view>
       <view class="nav-right">
-        <view v-if="phase === 'playing'" class="nav-btn sm" @tap="togglePause">
-          {{ paused ? '▶' : 'Ⅱ' }}
-        </view>
+        <view
+          v-if="phase === 'playing'"
+          class="nav-btn sm"
+          @tap="togglePause"
+        >{{ paused ? '▶' : 'Ⅱ' }}</view>
       </view>
     </view>
 
-    <!-- ===== 介绍页 ===== -->
+    <!-- ===== 引导 ===== -->
     <view v-if="phase === 'intro'" class="intro">
-      <view class="intro-logo">💗</view>
-      <text class="intro-brand">爱脸动动</text>
-      <text class="intro-sub">口呼吸面容恢复 · 趣味训练</text>
-
       <view class="intro-art">
-        <text class="art-gun">🔫</text>
-        <text class="art-boom">💥</text>
+        <text class="art-face">😗</text>
+        <text class="art-bolt">⚡</text>
         <text class="art-monster">👾</text>
       </view>
 
       <text class="intro-tag">能量炮 · 轰飞张嘴怪</text>
       <text class="intro-name">{{ taskName || '弹唇啵啵操' }}</text>
-      <text class="intro-desc">抿唇蓄力，啵地一声把张嘴怪轰上天！</text>
+      <text class="intro-desc">全程人脸识别，无需按键：抿唇蓄力，弹唇发射！</text>
 
       <view class="steps">
         <view class="step">
-          <text class="step-ico">🤐</text>
-          <text class="step-txt">抿住小嘴巴，给能量炮充电（约 8 秒）</text>
+          <text class="step-ico">📷</text>
+          <text class="step-txt">开启摄像头，脸置于画面中央</text>
         </view>
         <view class="step">
-          <text class="step-ico">⚡</text>
-          <text class="step-txt">能量满格后，准备「弹唇」发射</text>
+          <text class="step-ico">🤐</text>
+          <text class="step-txt">识别「抿唇」自动蓄力（约 8 秒）</text>
         </view>
         <view class="step">
           <text class="step-ico">💥</text>
-          <text class="step-txt">「啵」地弹一下嘴唇，把张嘴怪轰飞！</text>
+          <text class="step-txt">识别「弹唇啵」自动轰飞张嘴怪</text>
         </view>
       </view>
 
@@ -251,7 +495,7 @@ const finishAndBack = async () => {
       <view class="hint-card">
         <text class="hint-ico">💡</text>
         <text class="hint-txt">
-          本游戏用「长按抿唇 + 点击弹唇」模拟动作，帮孩子坚持练习；真实动作是否标准，请以点评老师指导为准。
+          开始后将直接打开前置摄像头（请允许权限）。训练中无按键，仅靠抿唇蓄力、弹唇发射。动作是否标准以老师点评为准。
         </text>
       </view>
 
@@ -261,9 +505,8 @@ const finishAndBack = async () => {
       </view>
     </view>
 
-    <!-- ===== 对战中 ===== -->
+    <!-- ===== 对战中：人脸居中大窗 ===== -->
     <view v-else-if="phase === 'playing'" class="play">
-      <!-- 顶部状态 -->
       <view class="hud">
         <view class="progress-pill">
           <view
@@ -276,82 +519,77 @@ const finishAndBack = async () => {
         </view>
         <view class="rec-pill">
           <text class="rec-dot">●</text>
-          <text>训练中</text>
+          <text>识别中</text>
         </view>
       </view>
 
-      <!-- 怪物舞台 -->
-      <view class="stage">
+      <view class="cam-center">
+        <view class="cam-frame" :class="{ on: faceEnabled || faceStarting, full: energyFull }">
+          <!-- App/H5：renderjs 在组件内直接开摄像头，不跳网页 -->
+          <view class="cam-host">
+            <FaceCam
+              :run-token="camRunToken"
+              @snapshot="onFaceSnapshot"
+              @error="onCamError"
+              @started="onCamStarted"
+              @status="onCamStatus"
+            />
+
+          </view>
+
+          <view v-if="!faceEnabled && !faceStarting" class="cam-placeholder">
+            <text class="ph-ico">📷</text>
+            <text class="ph-txt">正在准备前置摄像头…</text>
+          </view>
+          <view v-else-if="faceStarting && !faceEnabled" class="cam-placeholder dim">
+            <text class="ph-ico">⏳</text>
+            <text class="ph-txt">{{ faceStatus || '正在启动摄像头…' }}</text>
+          </view>
+
+          <view class="face-ring" :class="{ ok: faceDetected, charge: charging, full: energyFull }" />
+
+          <view class="cam-badge" :class="{ ok: faceDetected, warn: !faceDetected && faceReady }">
+            <text v-if="faceStarting">启动中…</text>
+            <text v-else-if="faceEnabled && faceDetected">人脸已锁定</text>
+            <text v-else-if="faceEnabled">寻找人脸…</text>
+            <text v-else>等待摄像头</text>
+          </view>
+
+          <view class="cam-energy">
+            <view class="cam-energy-track">
+              <view
+                class="cam-energy-fill"
+                :class="{ full: energyFull }"
+                :style="{ width: energy + '%' }"
+              />
+            </view>
+            <text class="cam-energy-label">{{ energyLabel }} · {{ Math.floor(energy) }}%</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="stage-mini">
         <view
           v-if="monsterVisible"
           class="monster"
           :class="{ flying: monsterFlying, shake: charging }"
         >
           <text class="monster-face">👾</text>
-          <view class="monster-tag">{{ monsterFlying ? '快轰我！' : '张嘴怪' }}</view>
+          <view class="monster-tag">{{ monsterFlying ? '被轰飞！' : (readyToFire ? '等你弹唇啵' : '张嘴怪') }}</view>
         </view>
         <view v-else class="monster-empty">
           <text>下一只马上出现…</text>
         </view>
-
-        <!-- 发射大按钮（能量满时） -->
-        <view
-          v-if="readyToFire && !blasting"
-          class="fire-btn"
-          @tap="onFire"
-        >
-          <text class="fire-bolt">⚡</text>
-          <text>啵地发射！</text>
-        </view>
         <view v-if="blasting" class="blast-fx">💥 啵！</view>
       </view>
 
-      <!-- 左侧能量条 -->
-      <view class="energy-rail">
-        <view class="energy-bolt" :class="{ on: energyFull }">⚡</view>
-        <view class="energy-track">
-          <view
-            class="energy-fill"
-            :class="{ full: energyFull }"
-            :style="{ height: energy + '%' }"
-          />
-        </view>
-        <text class="energy-label">{{ energyLabel }}</text>
-      </view>
-
-      <!-- 底部操作 + 提示 -->
-      <view class="bottom">
+      <view class="bottom-tip">
         <view class="tip-bubble">
           <text class="tip-main">{{ tipText }}</text>
-          <view class="tip-brand">💗 爱脸动动</view>
-        </view>
-
-        <view class="controls">
-          <view
-            class="ctrl-btn charge"
-            :class="{ active: charging, disabled: readyToFire || blasting || !monsterVisible }"
-            @touchstart.prevent="onChargeStart"
-            @touchend.prevent="onChargeEnd"
-            @touchcancel.prevent="onChargeEnd"
-            @mousedown.prevent="onChargeStart"
-            @mouseup.prevent="onChargeEnd"
-            @mouseleave.prevent="onChargeEnd"
-          >
-            <text class="ctrl-ico">🤐</text>
-            <text>{{ charging ? '蓄力中…' : '长按 · 抿唇蓄力' }}</text>
-          </view>
-          <view
-            class="ctrl-btn fire"
-            :class="{ ready: readyToFire && !blasting, disabled: !readyToFire || blasting }"
-            @tap="onFire"
-          >
-            <text class="ctrl-ico">💋</text>
-            <text>弹唇发射</text>
-          </view>
+          <view class="tip-brand">💗 爱脸动动 · 纯人脸操控</view>
         </view>
       </view>
 
-      <!-- 暂停遮罩 -->
       <view v-if="paused" class="pause-mask" @tap="togglePause">
         <text class="pause-title">已暂停</text>
         <text class="pause-sub">点击继续</text>
@@ -378,7 +616,6 @@ const finishAndBack = async () => {
       </view>
       <text class="success-note">完成后将自动勾选任务并获得金币；也可回首页再上传视频给老师点评</text>
     </view>
-
   </view>
 </template>
 
@@ -395,24 +632,23 @@ const finishAndBack = async () => {
 .nav {
   display: flex;
   align-items: center;
-  padding-left: 24rpx;
-  padding-right: 24rpx;
+  padding-left: 16rpx;
+  padding-right: 16rpx;
   padding-bottom: 12rpx;
-  z-index: 10;
   position: relative;
+  z-index: 5;
 }
 
 .nav-btn {
   width: 72rpx;
   height: 72rpx;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.35);
+  border-radius: 36rpx;
+  background: rgba(0, 0, 0, 0.25);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 40rpx;
+  font-size: 44rpx;
   line-height: 1;
-  flex-shrink: 0;
 
   &.sm {
     font-size: 28rpx;
@@ -423,21 +659,21 @@ const finishAndBack = async () => {
 
 .nav-title-wrap {
   flex: 1;
-  text-align: center;
-  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 12rpx;
 }
 
 .nav-title {
-  display: block;
-  font-size: 30rpx;
-  font-weight: 600;
+  font-size: 32rpx;
+  font-weight: 700;
 }
 
 .nav-sub {
-  display: block;
-  font-size: 22rpx;
-  opacity: 0.75;
   margin-top: 4rpx;
+  font-size: 20rpx;
+  opacity: 0.7;
 }
 
 .nav-right {
@@ -448,54 +684,61 @@ const finishAndBack = async () => {
 
 /* ---- intro ---- */
 .intro {
-  padding: 24rpx 40rpx calc(40rpx + env(safe-area-inset-bottom));
+  padding: 24rpx 40rpx calc(48rpx + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   align-items: center;
-}
-
-.intro-logo {
-  font-size: 64rpx;
-  margin-top: 12rpx;
-}
-
-.intro-brand {
-  font-size: 36rpx;
-  font-weight: 700;
-  margin-top: 8rpx;
-}
-
-.intro-sub {
-  font-size: 24rpx;
-  opacity: 0.7;
-  margin-top: 6rpx;
+  text-align: center;
 }
 
 .intro-art {
-  margin: 36rpx 0 20rpx;
-  display: flex;
-  align-items: center;
-  gap: 12rpx;
-  font-size: 72rpx;
+  position: relative;
+  width: 280rpx;
+  height: 200rpx;
+  margin: 24rpx 0 16rpx;
+}
+
+.art-face {
+  font-size: 120rpx;
+  position: absolute;
+  left: 20rpx;
+  top: 20rpx;
+}
+
+.art-bolt {
+  font-size: 56rpx;
+  position: absolute;
+  left: 130rpx;
+  top: 70rpx;
+}
+
+.art-monster {
+  font-size: 88rpx;
+  position: absolute;
+  right: 10rpx;
+  top: 40rpx;
 }
 
 .intro-tag {
-  font-size: 26rpx;
-  color: #ffd666;
-  margin-bottom: 8rpx;
+  font-size: 24rpx;
+  opacity: 0.85;
+  background: rgba(255, 255, 255, 0.12);
+  padding: 8rpx 24rpx;
+  border-radius: 24rpx;
 }
 
 .intro-name {
-  font-size: 52rpx;
+  margin-top: 20rpx;
+  font-size: 48rpx;
   font-weight: 800;
-  letter-spacing: 2rpx;
 }
 
 .intro-desc {
   margin-top: 12rpx;
   font-size: 26rpx;
-  opacity: 0.85;
-  text-align: center;
+  opacity: 0.9;
+  line-height: 1.5;
+  padding: 0 12rpx;
 }
 
 .steps {
@@ -509,15 +752,15 @@ const finishAndBack = async () => {
 .step {
   display: flex;
   align-items: center;
-  gap: 16rpx;
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.22);
   border-radius: 20rpx;
-  padding: 22rpx 24rpx;
+  padding: 20rpx 24rpx;
+  text-align: left;
 }
 
 .step-ico {
   font-size: 36rpx;
-  flex-shrink: 0;
+  margin-right: 16rpx;
 }
 
 .step-txt {
@@ -528,20 +771,21 @@ const finishAndBack = async () => {
 
 .trophy-line {
   margin-top: 28rpx;
-  font-size: 24rpx;
-  color: #ffd666;
+  font-size: 26rpx;
+  font-weight: 600;
 }
 
 .hint-card {
-  margin-top: 24rpx;
+  margin-top: 28rpx;
   width: 100%;
   box-sizing: border-box;
-  background: rgba(0, 0, 0, 0.22);
+  background: rgba(255, 255, 255, 0.1);
+  border: 2rpx solid rgba(255, 255, 255, 0.15);
   border-radius: 20rpx;
   padding: 20rpx 24rpx;
   display: flex;
   gap: 12rpx;
-  align-items: flex-start;
+  text-align: left;
 }
 
 .hint-ico {
@@ -558,17 +802,16 @@ const finishAndBack = async () => {
 .start-btn {
   margin-top: 40rpx;
   width: 100%;
-  height: 100rpx;
-  border-radius: 999rpx;
-  background: linear-gradient(90deg, #ffb347, #ff7a59);
-  color: #3b1a00;
-  font-size: 34rpx;
-  font-weight: 700;
+  height: 96rpx;
+  border-radius: 48rpx;
+  background: linear-gradient(90deg, #ff6b9d, #ff8e53);
+  box-shadow: 0 12rpx 28rpx rgba(255, 107, 157, 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: 32rpx;
+  font-weight: 700;
   gap: 12rpx;
-  box-shadow: 0 12rpx 32rpx rgba(255, 122, 89, 0.45);
 }
 
 .start-ico {
@@ -577,25 +820,30 @@ const finishAndBack = async () => {
 
 /* ---- play ---- */
 .play {
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 24rpx calc(24rpx + env(safe-area-inset-bottom));
   min-height: calc(100vh - 120rpx);
-  padding-bottom: calc(24rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  position: relative;
 }
 
 .hud {
+  width: 100%;
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  padding: 8rpx 28rpx 0;
+  align-items: center;
+  margin-bottom: 16rpx;
 }
 
 .progress-pill {
   display: flex;
   align-items: center;
   gap: 10rpx;
-  background: rgba(0, 0, 0, 0.35);
-  padding: 12rpx 20rpx;
-  border-radius: 999rpx;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 10rpx 20rpx;
+  border-radius: 28rpx;
 }
 
 .dot {
@@ -606,14 +854,14 @@ const finishAndBack = async () => {
   border: 2rpx solid rgba(255, 255, 255, 0.35);
 
   &.lit {
-    background: #ffd666;
-    border-color: #fff;
-    box-shadow: 0 0 12rpx rgba(255, 214, 102, 0.8);
+    background: #ffd76a;
+    border-color: #ffe9a8;
+    box-shadow: 0 0 10rpx rgba(255, 215, 106, 0.8);
   }
 
   &.big {
-    width: 36rpx;
-    height: 36rpx;
+    width: 28rpx;
+    height: 28rpx;
   }
 }
 
@@ -627,35 +875,195 @@ const finishAndBack = async () => {
   display: flex;
   align-items: center;
   gap: 8rpx;
-  background: rgba(0, 0, 0, 0.4);
-  padding: 10rpx 20rpx;
-  border-radius: 999rpx;
+  background: rgba(255, 60, 80, 0.25);
+  padding: 10rpx 18rpx;
+  border-radius: 28rpx;
   font-size: 22rpx;
 }
 
 .rec-dot {
-  color: #ff4d4f;
+  color: #ff4d6a;
   font-size: 18rpx;
+  animation: blink 1s infinite;
 }
 
-.stage {
-  margin-top: 40rpx;
-  height: 420rpx;
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.cam-center {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  flex: 1;
+  min-height: 520rpx;
+  align-items: center;
+}
+
+.cam-frame {
+  position: relative;
+  width: min(92vw, 640rpx);
+  aspect-ratio: 3 / 4;
+  border-radius: 36rpx;
+  overflow: hidden;
+  background: #12082e;
+  border: 4rpx solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 16rpx 40rpx rgba(0, 0, 0, 0.35);
+
+  &.on {
+    border-color: rgba(120, 200, 255, 0.55);
+  }
+
+  &.full {
+    border-color: rgba(255, 215, 106, 0.9);
+    box-shadow: 0 0 28rpx rgba(255, 215, 106, 0.45);
+  }
+}
+
+.cam-host {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.cam-placeholder {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  background: rgba(18, 8, 46, 0.72);
+  padding: 32rpx;
+  box-sizing: border-box;
+  pointer-events: none;
+
+  &.dim {
+    background: rgba(18, 8, 46, 0.45);
+  }
+}
+
+.ph-ico {
+  font-size: 64rpx;
+}
+
+.ph-txt {
+  margin-top: 16rpx;
+  font-size: 26rpx;
+  text-align: center;
+  line-height: 1.45;
+  opacity: 0.9;
+}
+
+.face-ring {
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  top: 14%;
+  bottom: 22%;
+  border: 3rpx dashed rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  z-index: 3;
+  pointer-events: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+
+  &.ok {
+    border-style: solid;
+    border-color: rgba(100, 220, 160, 0.85);
+  }
+
+  &.charge {
+    border-color: rgba(255, 180, 80, 0.95);
+    box-shadow: 0 0 24rpx rgba(255, 160, 60, 0.4);
+  }
+
+  &.full {
+    border-color: rgba(255, 215, 106, 1);
+    box-shadow: 0 0 28rpx rgba(255, 215, 106, 0.55);
+  }
+}
+
+.cam-badge {
+  position: absolute;
+  top: 16rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  background: rgba(0, 0, 0, 0.45);
+  padding: 8rpx 20rpx;
+  border-radius: 20rpx;
+  font-size: 22rpx;
+  white-space: nowrap;
+
+  &.ok {
+    background: rgba(30, 140, 90, 0.75);
+  }
+
+  &.warn {
+    background: rgba(160, 100, 20, 0.75);
+  }
+}
+
+.cam-energy {
+  position: absolute;
+  left: 24rpx;
+  right: 24rpx;
+  bottom: 20rpx;
+  z-index: 4;
+}
+
+.cam-energy-track {
+  height: 16rpx;
+  border-radius: 8rpx;
+  background: rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.cam-energy-fill {
+  height: 100%;
+  border-radius: 8rpx;
+  background: linear-gradient(90deg, #5ad1ff, #7d8cff);
+  transition: width 0.08s linear;
+
+  &.full {
+    background: linear-gradient(90deg, #ffd76a, #ff8e53);
+  }
+}
+
+.cam-energy-label {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  text-align: center;
+  text-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.6);
+}
+
+.stage-mini {
   position: relative;
+  width: 100%;
+  min-height: 140rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 8rpx;
 }
 
 .monster {
   display: flex;
   flex-direction: column;
   align-items: center;
-  transition: transform 0.55s ease, opacity 0.55s ease;
+  transition: transform 0.7s ease-in, opacity 0.7s ease-in;
 
   &.shake {
-    animation: wobble 0.4s ease-in-out infinite;
+    animation: shake 0.4s ease-in-out infinite;
   }
 
   &.flying {
@@ -665,198 +1073,90 @@ const finishAndBack = async () => {
 }
 
 .monster-face {
-  font-size: 160rpx;
+  font-size: 100rpx;
   line-height: 1;
-  filter: drop-shadow(0 12rpx 24rpx rgba(0, 0, 0, 0.35));
+  filter: drop-shadow(0 8rpx 16rpx rgba(0, 0, 0, 0.35));
 }
 
 .monster-tag {
-  margin-top: 8rpx;
-  background: #ff9a6b;
-  color: #fff;
-  font-size: 24rpx;
-  padding: 6rpx 20rpx;
-  border-radius: 999rpx;
-  font-weight: 600;
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 6rpx 16rpx;
+  border-radius: 20rpx;
 }
 
 .monster-empty {
-  opacity: 0.6;
-  font-size: 26rpx;
+  font-size: 24rpx;
+  opacity: 0.7;
 }
 
-.fire-btn {
-  margin-top: 28rpx;
-  background: linear-gradient(90deg, #ffe566, #ffc107);
-  color: #2a1a6e;
-  font-size: 32rpx;
-  font-weight: 800;
-  padding: 22rpx 48rpx;
-  border-radius: 999rpx;
-  display: flex;
-  align-items: center;
-  gap: 12rpx;
-  box-shadow: 0 10rpx 28rpx rgba(255, 193, 7, 0.5);
-  animation: pulse 1s ease-in-out infinite;
-}
-
-.fire-bolt {
-  font-size: 32rpx;
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-6rpx);
+  }
+  75% {
+    transform: translateX(6rpx);
+  }
 }
 
 .blast-fx {
-  margin-top: 24rpx;
+  position: absolute;
   font-size: 48rpx;
   font-weight: 800;
-  color: #ffd666;
-  animation: pop 0.4s ease-out;
+  animation: blast-pop 0.6s ease-out;
+  text-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.4);
 }
 
-.energy-rail {
-  position: absolute;
-  left: 28rpx;
-  top: 160rpx;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12rpx;
-}
-
-.energy-bolt {
-  width: 48rpx;
-  height: 48rpx;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 28rpx;
-
-  &.on {
-    background: #ffd666;
-    box-shadow: 0 0 16rpx rgba(255, 214, 102, 0.9);
+@keyframes blast-pop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  40% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.9;
   }
 }
 
-.energy-track {
-  width: 28rpx;
-  height: 320rpx;
-  border-radius: 999rpx;
-  background: rgba(0, 0, 0, 0.35);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  border: 2rpx solid rgba(255, 255, 255, 0.2);
-}
-
-.energy-fill {
+.bottom-tip {
   width: 100%;
-  background: linear-gradient(180deg, #ffe566 0%, #ff9800 55%, #ff5722 100%);
-  border-radius: 999rpx;
-  transition: height 0.08s linear;
-  box-shadow: 0 0 16rpx rgba(255, 193, 7, 0.6);
-
-  &.full {
-    background: linear-gradient(180deg, #fff59d 0%, #ffd666 40%, #ff9800 100%);
-  }
-}
-
-.energy-label {
-  font-size: 22rpx;
-  font-weight: 700;
-  color: #ffd666;
-}
-
-.bottom {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 0 28rpx calc(28rpx + env(safe-area-inset-bottom));
+  padding: 16rpx 32rpx 8rpx;
+  box-sizing: border-box;
 }
 
 .tip-bubble {
-  background: rgba(255, 255, 255, 0.95);
-  color: #333;
+  background: rgba(0, 0, 0, 0.35);
   border-radius: 24rpx;
-  padding: 20rpx 24rpx 16rpx;
-  margin-bottom: 20rpx;
-  position: relative;
+  padding: 24rpx 28rpx;
+  text-align: center;
 }
 
 .tip-main {
-  font-size: 26rpx;
-  line-height: 1.5;
   display: block;
-  padding-right: 120rpx;
+  font-size: 28rpx;
+  line-height: 1.45;
+  font-weight: 500;
 }
 
 .tip-brand {
-  position: absolute;
-  right: 16rpx;
-  bottom: 12rpx;
-  font-size: 20rpx;
-  color: #e85a7a;
-  background: #fff0f3;
-  padding: 4rpx 12rpx;
-  border-radius: 999rpx;
-}
-
-.controls {
-  display: flex;
-  gap: 16rpx;
-}
-
-.ctrl-btn {
-  flex: 1;
-  height: 96rpx;
-  border-radius: 999rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10rpx;
-  font-size: 26rpx;
-  font-weight: 600;
-
-  .ctrl-ico {
-    font-size: 30rpx;
-  }
-
-  &.charge {
-    background: rgba(255, 255, 255, 0.18);
-    border: 2rpx solid rgba(255, 255, 255, 0.35);
-
-    &.active {
-      background: linear-gradient(90deg, #7b5cff, #9b7cff);
-      border-color: transparent;
-    }
-
-    &.disabled {
-      opacity: 0.4;
-    }
-  }
-
-  &.fire {
-    background: rgba(255, 255, 255, 0.12);
-    opacity: 0.55;
-
-    &.ready {
-      opacity: 1;
-      background: linear-gradient(90deg, #ffb347, #ff7eb3);
-      box-shadow: 0 8rpx 24rpx rgba(255, 126, 179, 0.45);
-    }
-
-    &.disabled:not(.ready) {
-      opacity: 0.45;
-    }
-  }
+  margin-top: 12rpx;
+  font-size: 22rpx;
+  opacity: 0.7;
 }
 
 .pause-mask {
   position: absolute;
   inset: 0;
-  background: rgba(20, 10, 50, 0.72);
+  background: rgba(20, 8, 50, 0.82);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -870,14 +1170,13 @@ const finishAndBack = async () => {
 }
 
 .pause-sub {
-  margin-top: 12rpx;
-  font-size: 26rpx;
+  margin-top: 16rpx;
+  font-size: 28rpx;
   opacity: 0.8;
 }
 
-/* ---- success ---- */
 .success {
-  padding: 80rpx 40rpx calc(40rpx + env(safe-area-inset-bottom));
+  padding: 48rpx 40rpx calc(48rpx + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -890,47 +1189,48 @@ const finishAndBack = async () => {
 
 .success-title {
   margin-top: 16rpx;
-  font-size: 48rpx;
-  font-weight: 800;
+  font-size: 44rpx;
+  font-weight: 700;
 }
 
 .success-desc {
   margin-top: 16rpx;
-  font-size: 28rpx;
+  font-size: 26rpx;
   opacity: 0.9;
   line-height: 1.5;
 }
 
 .success-dots {
-  margin-top: 40rpx;
   display: flex;
   gap: 16rpx;
+  margin: 40rpx 0;
 }
 
 .success-actions {
-  margin-top: 60rpx;
   width: 100%;
   display: flex;
+  flex-direction: column;
   gap: 20rpx;
+  margin-top: 12rpx;
 }
 
 .s-btn {
-  flex: 1;
   height: 92rpx;
-  border-radius: 999rpx;
+  border-radius: 46rpx;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 30rpx;
   font-weight: 600;
 
-  &.ghost {
-    background: rgba(255, 255, 255, 0.15);
+  &.primary {
+    background: linear-gradient(90deg, #ff6b9d, #ff8e53);
+    box-shadow: 0 12rpx 28rpx rgba(255, 107, 157, 0.4);
   }
 
-  &.primary {
-    background: linear-gradient(90deg, #ffb347, #ff7a59);
-    color: #3b1a00;
+  &.ghost {
+    background: rgba(255, 255, 255, 0.15);
+    border: 2rpx solid rgba(255, 255, 255, 0.35);
   }
 
   &.disabled {
@@ -939,42 +1239,11 @@ const finishAndBack = async () => {
   }
 }
 
-
 .success-note {
   margin-top: 28rpx;
   font-size: 22rpx;
   opacity: 0.65;
   line-height: 1.5;
-}
-
-@keyframes wobble {
-  0%,
-  100% {
-    transform: rotate(-3deg) scale(1);
-  }
-  50% {
-    transform: rotate(3deg) scale(1.04);
-  }
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.05);
-  }
-}
-
-@keyframes pop {
-  0% {
-    transform: scale(0.5);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
+  padding: 0 12rpx;
 }
 </style>
