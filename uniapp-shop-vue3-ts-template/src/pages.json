@@ -52,6 +52,24 @@
         "navigationBarTextStyle": "white",
         "navigationStyle": "custom"
       }
+    },
+    {
+      "path": "pages/game/npoint",
+      "style": {
+        "navigationBarTitleText": "N点训练",
+        "navigationBarBackgroundColor": "#67cdeb",
+        "navigationBarTextStyle": "black",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/game/balloon",
+      "style": {
+        "navigationBarTitleText": "吹气球",
+        "navigationBarBackgroundColor": "#96dd48",
+        "navigationBarTextStyle": "black",
+        "navigationStyle": "custom"
+      }
     }
   ],
   "globalStyle": {

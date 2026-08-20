@@ -12,10 +12,11 @@ import {
   ensureCameraPermission,
   promptOpenCameraSettings,
 } from '@/utils/cameraPermission'
+import { playGameSfx, setGameSoundMuted, startGameBgm, stopGameBgm } from '@/utils/gameSound'
 
 
 const TARGET = 5
-const CHARGE_MS = 8000
+const CHARGE_MS = 4000
 const CHARGE_TICK = 80
 const CHARGE_STEP = (100 / CHARGE_MS) * CHARGE_TICK
 
@@ -103,6 +104,7 @@ onLoad((q) => {
 onHide(() => {
   stopCharge()
   stopFace()
+  stopGameBgm()
   if (phase.value === 'playing') paused.value = true
 })
 
@@ -121,6 +123,7 @@ onUnmounted(() => {
 function cleanupAll() {
   stopCharge()
   stopFace()
+  stopGameBgm()
 }
 
 function goBack() {
@@ -134,10 +137,14 @@ function togglePause() {
   if (phase.value !== 'playing') return
   paused.value = !paused.value
   if (paused.value) {
+    playGameSfx('pause')
+    stopGameBgm()
     stopCharge()
     // 暂停时关掉摄像头省电/释放
     stopFace()
   } else {
+    playGameSfx('resume')
+    startGameBgm('cute')
     void startFaceDetect()
   }
 }
@@ -159,6 +166,9 @@ async function startGame() {
   paused.value = false
   faceError.value = ''
   phase.value = 'playing'
+  setGameSoundMuted(false)
+  playGameSfx('start')
+  startGameBgm('cute')
   // 等对战区 / FaceCam 挂载后再开摄像头
   await nextTick()
   await startFaceDetect()
@@ -176,6 +186,7 @@ function startCharge() {
   if (paused.value || readyToFire.value || blasting.value || !monsterVisible.value) return
   if (charging.value) return
   charging.value = true
+  playGameSfx('charge')
   chargeTimer = setInterval(() => {
     if (paused.value) return
     energy.value = Math.min(100, energy.value + CHARGE_STEP)
@@ -183,6 +194,7 @@ function startCharge() {
       energy.value = 100
       stopCharge()
       readyToFire.value = true
+      playGameSfx('resume')
       uni.vibrateShort?.({})
     }
   }, CHARGE_TICK)
@@ -202,6 +214,7 @@ function onFire() {
   readyToFire.value = false
   stopCharge()
   monsterFlying.value = true
+  playGameSfx('pop')
   uni.vibrateShort?.({})
 
   setTimeout(() => {
@@ -212,7 +225,9 @@ function onFire() {
 
     if (score.value >= TARGET) {
       stopFace()
+      stopGameBgm()
       phase.value = 'success'
+      playGameSfx('success')
       uni.showToast({ icon: 'success', title: '训练成功！' })
       return
     }
@@ -271,7 +286,6 @@ async function startFaceDetect() {
   startWatchTimer = setTimeout(() => {
     if (phase.value !== 'playing' || paused.value) return
     if (faceStarting.value && !faceEnabled.value) {
-      // 用户已能看到预览时，至少解除启动态，继续等识别结果
       faceEnabled.value = true
       faceStarting.value = false
       if (!faceStatus.value || faceStatus.value.includes('打开') || faceStatus.value.includes('请求')) {
@@ -305,6 +319,7 @@ function onCamStarted() {
 }
 
 function onCamError(msg: string) {
+  playGameSfx('error')
   if (startWatchTimer) {
     clearTimeout(startWatchTimer)
     startWatchTimer = null
@@ -331,7 +346,7 @@ function onCamError(msg: string) {
     )
   } else {
     uni.showModal({
-      title: '摄像头/识别异常',
+      title: '人脸识别启动失败',
       content: faceError.value,
       confirmText: '重试',
       cancelText: '取消',
@@ -473,7 +488,7 @@ async function finishAndBack() {
 
       <text class="intro-tag">能量炮 · 轰飞张嘴怪</text>
       <text class="intro-name">{{ taskName || '弹唇啵啵操' }}</text>
-      <text class="intro-desc">全程人脸识别，无需按键：抿唇蓄力，弹唇发射！</text>
+      <text class="intro-desc">全程人脸识别，无需按键：抿唇蓄力，张嘴啵一下发射！</text>
 
       <view class="steps">
         <view class="step">
@@ -482,7 +497,7 @@ async function finishAndBack() {
         </view>
         <view class="step">
           <text class="step-ico">🤐</text>
-          <text class="step-txt">识别「抿唇」自动蓄力（约 8 秒）</text>
+          <text class="step-txt">识别「抿唇」自动蓄力（约 4 秒）</text>
         </view>
         <view class="step">
           <text class="step-ico">💥</text>
@@ -965,10 +980,10 @@ async function finishAndBack() {
 
 .face-ring {
   position: absolute;
-  left: 12%;
-  right: 12%;
-  top: 14%;
-  bottom: 22%;
+  left: 16%;
+  right: 16%;
+  top: 8%;
+  bottom: 30%;
   border: 3rpx dashed rgba(255, 255, 255, 0.35);
   border-radius: 50%;
   z-index: 3;

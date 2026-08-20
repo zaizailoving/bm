@@ -157,14 +157,35 @@ const isBoboTask = (task: DailyTaskItem) => {
   return n.includes('弹唇') || n.includes('啵啵') || n.includes('波波')
 }
 
+/** 是否「N点训练」任务（可进游戏打卡） */
+const isNPointTask = (task: DailyTaskItem) => {
+  const n = (task.task_name || '').replace(/\s/g, '')
+  return n.includes('N点') || n.includes('n点')
+}
+
+/** 是否「吹气球」任务（可进游戏打卡） */
+const isBalloonTask = (task: DailyTaskItem) => {
+  const n = (task.task_name || '').replace(/\s/g, '')
+  return n.includes('吹气球') || n.includes('气球')
+}
+
+const isGameTask = (task: DailyTaskItem) =>
+  isBoboTask(task) || isNPointTask(task) || isBalloonTask(task)
+
 const onGameCheckin = (task: DailyTaskItem) => {
   if (!isLogin.value) {
     goLogin()
     return
   }
+  const page = isNPointTask(task) ? 'npoint' : isBalloonTask(task) ? 'balloon' : 'bobo'
+  const fallbackName = isNPointTask(task)
+    ? 'N点训练'
+    : isBalloonTask(task)
+      ? '吹气球'
+      : '弹唇啵啵操'
   uni.navigateTo({
-    url: `/pages/game/bobo?checkin_id=${encodeURIComponent(String(task.checkin_id))}&name=${encodeURIComponent(
-      task.task_name || '弹唇啵啵操',
+    url: `/pages/game/${page}?checkin_id=${encodeURIComponent(String(task.checkin_id))}&name=${encodeURIComponent(
+      task.task_name || fallbackName,
     )}`,
   })
 }
@@ -443,7 +464,7 @@ const onSwitchPlan = () => {
           </view>
 
         </view>
-        <view class="task-actions" :class="{ 'three-cols': isBoboTask(task) }">
+        <view class="task-actions" :class="{ 'three-cols': isGameTask(task) }">
           <view
             class="btn ghost"
             :class="{ disabled: !hasTeachVideo(task.task_name, task.teach_video_url) }"
@@ -453,7 +474,7 @@ const onSwitchPlan = () => {
             看教学视频
           </view>
           <view
-            v-if="isBoboTask(task)"
+            v-if="isGameTask(task)"
             class="btn game"
             @tap="onGameCheckin(task)"
           >
@@ -1279,4 +1300,3 @@ $gold: #e8a317;
 
 
 </style>
-

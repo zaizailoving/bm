@@ -18,6 +18,16 @@ export type FaceLipSnapshot = {
     isPursed: boolean
     /** 本帧触发弹唇（瞬时） */
     isPop: boolean
+    /** N点训练近似：张大嘴并检测到舌尖上顶 */
+    isNPoint?: boolean
+    /** 舌尖上顶近似识别结果 */
+    isTongueUp?: boolean
+    /** 舌色/上顶置信度 0~1 */
+    tongueUpScore?: number
+    /** 吹气球近似：闭嘴/嘟嘴吹气姿态 */
+    isBlowing?: boolean
+    /** 吹气姿态置信度 0~1 */
+    blowScore?: number
     /** 状态文案 */
     statusText: string
     error?: string
