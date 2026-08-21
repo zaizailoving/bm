@@ -169,22 +169,7 @@ const onReportTap = () => {
         </view>
       </view>
 
-      <!-- 结营评估报告 -->
-      <view class="card report-card" @tap="onReportTap">
-        <view class="report-head">
-          <view class="card-title">
-            <view class="icon-clip">📋</view>
-            <text class="title-text">结营评估报告</text>
-          </view>
-          <view class="status-tag" :class="{ open: reportOpen }">
-            {{ reportOpen ? '已开放' : '未开放' }}
-          </view>
-        </view>
-        <view class="report-desc">
-          第 {{ reportDay }} 天 / 共 {{ reportTotal }} 天，D{{ reportUnlockDay }} 解锁
-        </view>
-      </view>
-
+  
       <!-- 底部吉祥物 + 文案 -->
       <view class="footer-mascots">
         <view class="mascot yellow">◆</view>

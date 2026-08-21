@@ -130,6 +130,21 @@ namespace BM.Service.Core.Controller
             return ResultModel<object>.Success(new { changed = true }, "success");
         }
 
+        /// <summary>
+        /// Demo password reset using username and registered phone number.
+        /// </summary>
+        [AllowAnonymous]
+        [HttpPost("reset-password")]
+        public async Task<ResultModel<object>> ResetPassword([FromBody] ResetPasswordInputViewModel input)
+        {
+            var (ok, error) = await _accountService.ResetPassword(input);
+            if (!ok)
+            {
+                return ResultModel<object>.Error(error ?? "reset password failed", 400);
+            }
+            return ResultModel<object>.Success(new { changed = true }, "success");
+        }
+
         private string? GetClientIp()
         {
             var ip = HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault();

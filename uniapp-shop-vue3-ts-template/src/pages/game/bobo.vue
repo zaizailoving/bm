@@ -16,7 +16,7 @@ import { playGameSfx, setGameSoundMuted, startGameBgm, stopGameBgm } from '@/uti
 
 
 const TARGET = 5
-const CHARGE_MS = 4000
+const CHARGE_MS = 15000
 const CHARGE_TICK = 80
 const CHARGE_STEP = (100 / CHARGE_MS) * CHARGE_TICK
 

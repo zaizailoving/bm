@@ -37,6 +37,18 @@
       }
     },
     {
+      "path": "pages/login/register",
+      "style": {
+        "navigationBarTitleText": "注册账号"
+      }
+    },
+    {
+      "path": "pages/login/forgot-password",
+      "style": {
+        "navigationBarTitleText": "忘记密码"
+      }
+    },
+    {
       "path": "pages/video/play",
       "style": {
         "navigationBarTitleText": "教学视频",

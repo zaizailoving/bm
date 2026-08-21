@@ -68,15 +68,15 @@ const canSubmit = computed(
 
 const submitHint = computed(() => {
   if (!isLogin.value) return '请先登录'
-  if (!plan.value) return '暂无训练计划'
-  if (plan.value.status === 'submitted' || plan.value.status === 'commented') {
-    return '今日已提交'
-  }
-  if (tasks.value.length === 0) return '今日暂无任务'
-  if (!allDone.value) {
-    return `未上传任何动作（${uploadedCount.value}/${tasks.value.length}）`
-  }
-  return '一键提交今日打卡'
+  // if (!plan.value) return '暂无训练计划'
+  // if (plan.value.status === 'submitted' || plan.value.status === 'commented') {
+  //   return '今日已提交'
+  // }
+  // if (tasks.value.length === 0) return '今日暂无任务'
+  // if (!allDone.value) {
+  //   return `未上传任何动作（${uploadedCount.value}/${tasks.value.length}）`
+  // }
+  // return '一键提交今日打卡'
 })
 
 /** 任务展示用图标底色轮换 */

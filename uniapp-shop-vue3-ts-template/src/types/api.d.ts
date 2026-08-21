@@ -27,10 +27,17 @@ export type LoginOutput = {
 
 /** 注册请求体 */
 export type RegisterInput = {
-    user_name: string
+    username: string
     password: string
     nickname?: string
     phone?: string
+    role?: 'student' | 'teacher'
+}
+
+export type ResetPasswordInput = {
+    username: string
+    phone: string
+    new_password: string
 }
 
 /** 用户个人信息 */

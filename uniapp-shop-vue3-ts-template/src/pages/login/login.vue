@@ -64,6 +64,9 @@ const goBack = () => {
     uni.switchTab({ url: '/pages/index/index' })
   }
 }
+
+const goRegister = () => uni.navigateTo({ url: '/pages/login/register' })
+const goForgotPassword = () => uni.navigateTo({ url: '/pages/login/forgot-password' })
 </script>
 
 <template>
@@ -108,6 +111,12 @@ const goBack = () => {
       <button class="btn-login" :loading="loading" :disabled="loading" @tap="onLogin">
         登 录
       </button>
+
+      <view class="auth-links">
+        <text class="link" @tap="goRegister">注册账号</text>
+        <text class="divider">|</text>
+        <text class="link" @tap="goForgotPassword">忘记密码</text>
+      </view>
 
       <view class="tips">
         <text>演示账号：mock（任意密码或不填）· 管理员：admin / 1</text>
@@ -235,6 +244,18 @@ const goBack = () => {
   color: #999;
   line-height: 1.5;
   text-align: center;
+}
+
+.auth-links {
+  margin-top: 28rpx;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 24rpx;
+  font-size: 26rpx;
+
+  .link { color: #27ba9b; }
+  .divider { color: #ddd; }
 }
 
 .link-row {

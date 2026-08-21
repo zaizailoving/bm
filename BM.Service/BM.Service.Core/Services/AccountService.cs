@@ -173,6 +173,31 @@ namespace BM.Service.Core.Services
             return (true, null);
         }
 
+        public async Task<(bool ok, string? error)> ResetPassword(ResetPasswordInputViewModel input)
+        {
+            var username = (input.username ?? string.Empty).Trim();
+            var phone = (input.phone ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(phone))
+            {
+                return (false, "username and phone are required");
+            }
+            if (string.IsNullOrWhiteSpace(input.new_password) || input.new_password.Length < 6)
+            {
+                return (false, "new password must be at least 6 characters");
+            }
+
+            var user = await _sqlDBContext.GetDbSet<userEntity>()
+                .FirstOrDefaultAsync(u => u.username == username && u.phone == phone && u.status == "normal");
+            if (user == null)
+            {
+                return (false, "username or phone is incorrect");
+            }
+
+            user.password_hash = input.new_password;
+            await _sqlDBContext.SaveChangesAsync();
+            return (true, null);
+        }
+
         public string HelloWorld()
         {
             return _stringLocalizer["hello word"];

@@ -24,6 +24,11 @@ namespace BM.Service.Core.Services
         /// </summary>
         Task<(bool ok, string? error)> ChangePassword(int userId, ChangePasswordInputViewModel input);
 
+        /// <summary>
+        /// Demo password reset using username and registered phone number.
+        /// </summary>
+        Task<(bool ok, string? error)> ResetPassword(ResetPasswordInputViewModel input);
+
         string HelloWorld();
     }
 }
